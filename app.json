@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "EPS POS",
+    "slug": "eps-pos-app",
+    "scheme": "eps-pos-app",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/logo.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "jsEngine": "hermes",
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.andisurandi.epsposapp",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/logo.png",
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "63b8b639-235a-4e41-9572-5aee3d822296"
+      }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "allowBackup": true,
+            "enablePasswordlessV2": true,
+            "enableProguardInReleaseBuilds": true,
+            "shrinkResourcesInReleaseBuilds": true,
+            "enableMinifyInReleaseBuilds": true
+          }
+        }
+      ],
+      "./withAndroidX.js",
+      "@react-native-community/datetimepicker"
+    ],
+    "owner": "surandi29"
+  }
+}

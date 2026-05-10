@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "node": "20.10.0", 
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      }
+    },
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "node": "20.10.0",
+      "env": {
+        "APP_ENV": "production" 
+      },
+      "android": {
+        "buildType": "apk",  
+        "gradleCommand": ":app:assembleRelease" 
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

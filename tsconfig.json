@@ -1,0 +1,15 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true, // <--- SANGAT PENTING: Mengabaikan pengecekan tipe di library (node_modules)
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "exclude": [
+    "node_modules", // <--- Memastikan TS tidak mengurus file di dalam node_modules
+    ".expo",
+    "export"
+  ]
+}
