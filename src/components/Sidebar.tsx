@@ -174,9 +174,10 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
         }
     ], []);
 
+    // PERBAIKAN: Gunakan .toUpperCase() pada userRole agar match dengan array `roles` yang memakai huruf besar semua.
     const filteredGroups = menuGroups.map(group => ({
         ...group,
-        items: group.items.filter(item => !userRole || item.roles.includes(userRole))
+        items: group.items.filter(item => !userRole || item.roles.includes(userRole.toUpperCase()))
     })).filter(group => group.items.length > 0);
 
     const widthStyle = isMobile ? '100%' : (isCollapsed ? 80 : 280);

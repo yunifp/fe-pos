@@ -1,14 +1,15 @@
+// src/screens/DashboardScreen.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, ActivityIndicator, useWindowDimensions, TouchableOpacity, Platform, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator, useWindowDimensions, TouchableOpacity, Platform } from 'react-native';
 import { LineChart, BarChart, PieChart } from "react-native-chart-kit";
-import { DollarSign, Store, Activity, TrendingUp, Package, CreditCard, User, Clock, Wallet, ChevronRight } from 'lucide-react-native';
+import { DollarSign, Store, Activity, TrendingUp, Package, CreditCard, User, Clock, Wallet } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useDashboardStore } from '../stores/dashboardStore';
 import { useSettingStore } from '../stores/settingStore';
 import MainLayout from '../components/MainLayout';
+import api from '../api/api';
 
-// --- KOMPONEN STAT CARD LOKAL ---
 const DashboardStatCard = ({ title, value, subtitle, icon, colors }: any) => {
     return (
         <View
@@ -29,22 +30,10 @@ const DashboardStatCard = ({ title, value, subtitle, icon, colors }: any) => {
 
             <View className="z-10 justify-between flex-1">
                 <View>
-                    <Text className="text-[10px] font-black text-white/70 uppercase tracking-[1.5px] mb-1">
-                        {title}
-                    </Text>
-                    <Text
-                        className="text-xl font-black tracking-tighter text-white md:text-2xl"
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                    >
-                        {value}
-                    </Text>
+                    <Text className="text-[10px] font-black text-white/70 uppercase tracking-[1.5px] mb-1">{title}</Text>
+                    <Text className="text-xl font-black tracking-tighter text-white md:text-2xl" numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
                 </View>
-                {subtitle && (
-                    <Text className="text-[9px] font-bold text-white/60 uppercase italic mt-2">
-                        {subtitle}
-                    </Text>
-                )}
+                {subtitle && <Text className="text-[9px] font-bold text-white/60 uppercase italic mt-2">{subtitle}</Text>}
             </View>
         </View>
     );
@@ -54,12 +43,38 @@ export default function DashboardScreen() {
     const { width: screenWidth } = useWindowDimensions();
     const { data, isLoading, fetchDashboard } = useDashboardStore();
     const { settings, fetchSettings } = useSettingStore();
+    
+    // RBAC States
     const [userData, setUserData] = useState<any>(null);
+    const [userPermissions, setUserPermissions] = useState<string[]>([]);
+    const [jobPosition, setJobPosition] = useState<string>('');
 
     useEffect(() => {
         fetchSettings();
         fetchDashboard();
-        AsyncStorage.getItem('user').then(u => u && setUserData(JSON.parse(u)));
+
+        // Ambil profil segar dari server untuk memverifikasi hak akses RBAC
+        const fetchUserData = async () => {
+            try {
+                const res = await api.get('/auth/me');
+                if (res.data) {
+                    setUserData(res.data);
+                    setUserPermissions(res.data.permissions || []);
+                    setJobPosition(res.data.jobPosition || '');
+                }
+            } catch (e) {
+                // Fallback ke penyimpanan lokal jika offline
+                AsyncStorage.getItem('user').then(u => {
+                    if (u) {
+                        const parsed = JSON.parse(u);
+                        setUserData(parsed);
+                        setUserPermissions(parsed.permissions || []);
+                        setJobPosition(parsed.jobPosition || '');
+                    }
+                });
+            }
+        };
+        fetchUserData();
     }, []);
 
     const onRefresh = React.useCallback(() => fetchDashboard(), []);
@@ -233,7 +248,6 @@ export default function DashboardScreen() {
     const renderCashierView = () => (
         <>
             <View className="flex-row flex-wrap mb-4 -mx-2">
-                {/* Kartu 1 */}
                 <View style={{ width: isTablet ? '50%' : '100%' }} className="p-2">
                     <DashboardStatCard
                         title="Penjualan Hari Ini"
@@ -243,13 +257,8 @@ export default function DashboardScreen() {
                         colors={[settings.themePrimaryColor || '#4F46E5', '#4338ca']}
                     />
                 </View>
-
-                {/* Kartu 2 - PERBAIKAN: Hapus h-full agar tidak merusak scroll */}
                 <View style={{ width: isTablet ? '50%' : '100%' }} className="p-2">
-                    <View
-                        style={{ minHeight: 110 }} // Samakan dengan minHeight StatCard
-                        className="justify-center p-5 bg-white border border-gray-100 shadow-sm rounded-[28px]"
-                    >
+                    <View style={{ minHeight: 110 }} className="justify-center p-5 bg-white border border-gray-100 shadow-sm rounded-[28px]">
                         <View className="flex-row items-center mb-2">
                             <Clock size={16} color="#F59E0B" style={{ marginRight: 8 }} />
                             <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Shift Aktif</Text>
@@ -280,35 +289,33 @@ export default function DashboardScreen() {
         </>
     );
 
+    // --- LOGIKA PENENTUAN TAMPILAN BERDASARKAN RBAC ---
+    // Pengecekan: Jika user adalah OWNER atau MANAGER, atau punya izin membaca laporan utama, render versi lengkap
+    const isExecutive = jobPosition === 'OWNER' || jobPosition === 'MANAGER' || userPermissions.includes('REPORT_READ');
+
     return (
         <MainLayout>
             <View className="flex-1 bg-slate-50/50">
-                {/* Header Mobile Tetap di Atas */}
                 <View className="z-10 flex-row items-center justify-between px-6 py-4 bg-white shadow-sm md:hidden">
                     <Text className="text-xl font-black tracking-tighter uppercase text-slate-900">Dashboard</Text>
                     <View className="items-center justify-center rounded-full w-9 h-9 bg-slate-900">
-                        <Text className="text-xs font-black text-white">{userData?.name?.charAt(0)}</Text>
+                        <Text className="text-xs font-black text-white">{userData?.fullName?.charAt(0) || 'U'}</Text>
                     </View>
                 </View>
 
-                {/* --- CONTAINER SCROLL UTAMA --- */}
                 <ScrollView
                     className="flex-1"
-                    contentContainerStyle={{
-                        padding: isDesktop ? 40 : 20,
-                        paddingBottom: 150, // Tambahkan padding bawah lebih besar agar tidak tertutup navbar
-                        flexGrow: 1
-                    }}
+                    contentContainerStyle={{ padding: isDesktop ? 40 : 20, paddingBottom: 150, flexGrow: 1 }}
                     refreshControl={<RefreshControl refreshing={isLoading} onRefresh={onRefresh} colors={[settings.themePrimaryColor]} />}
                     showsVerticalScrollIndicator={false}
                 >
                     <View className="flex-row items-end justify-between mb-8">
                         <View>
                             <Text className="mb-1 text-[10px] font-black tracking-widest text-slate-400 uppercase">
-                                {data?.type === 'CASHIER_VIEW' ? 'Panel Operasional Kasir' : 'Ringkasan Eksekutif Bisnis'}
+                                {isExecutive ? 'Ringkasan Eksekutif Bisnis' : 'Panel Operasional Kasir'}
                             </Text>
                             <Text className="text-3xl font-black tracking-tighter text-slate-900">
-                                Hi, {userData?.name?.split(' ')[0]} 👋
+                                Hi, {userData?.fullName?.split(' ')[0] || 'User'} 👋
                             </Text>
                         </View>
                         <View className="px-4 py-2 bg-white border shadow-sm border-slate-100 rounded-2xl">
@@ -323,7 +330,8 @@ export default function DashboardScreen() {
                             <ActivityIndicator size="large" color={settings.themePrimaryColor || '#4F46E5'} />
                         </View>
                     ) : (
-                        data?.type === 'OWNER_VIEW' ? renderOwnerView() : renderCashierView()
+                        // Render UI yang sesuai berdasarkan status RBAC
+                        isExecutive || data?.type === 'OWNER_VIEW' ? renderOwnerView() : renderCashierView()
                     )}
                 </ScrollView>
             </View>

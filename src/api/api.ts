@@ -1,19 +1,24 @@
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
-// Menggunakan Environment Variable bawaan Expo.
-// Jika tidak ada di .env (misal saat dev biasa), fallback ke http://localhost:3000/api
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000/api";
+// 1. Penyesuaian URL & Host Emulator Android
+// Emulator Android menggunakan 10.0.2.2 untuk mengakses localhost di komputer Anda.
+// Pastikan menyertakan prefix /v1 sesuai dengan pendaftaran rute di backend.
+const defaultHost = Platform.OS === "android" ? "10.0.2.2" : "localhost";
+const BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL || `http://${defaultHost}:3000/api/v1`;
 
 const api = axios.create({
   baseURL: BASE_URL,
   headers: {
     Accept: "application/json",
+    "x-tenant-slug": "kopi-papua",
   },
   timeout: 15000,
 });
 
-// --- LOGIKA REFRESH TOKEN SAMA SEPERTI SEBELUMNYA ---
+// --- LOGIKA REFRESH TOKEN ---
 let isRefreshing = false;
 let failedQueue: any[] = [];
 
@@ -75,8 +80,9 @@ api.interceptors.response.use(
           if (res.status === 200 || res.status === 201) {
             const { token, newRefreshToken } = res.data;
             await AsyncStorage.setItem("token", token);
-            if (newRefreshToken)
+            if (newRefreshToken) {
               await AsyncStorage.setItem("refreshToken", newRefreshToken);
+            }
 
             api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
             processQueue(null, token);

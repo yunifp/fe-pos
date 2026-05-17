@@ -1,37 +1,43 @@
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
-import { RootStackParamList } from '../../App';
 import React, { useState, useEffect } from 'react';
 import {
     View, Text, KeyboardAvoidingView, Platform, Alert,
     TouchableOpacity, Image, ActivityIndicator, ImageBackground,
-    StatusBar, useWindowDimensions, ScrollView
+    StatusBar, useWindowDimensions, ScrollView, Modal, FlatList
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Mail, Lock, ArrowRight, Store } from 'lucide-react-native';
+import { Mail, Lock, ArrowRight, Store, MapPin, SearchX, AlertCircle } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../App';
 
 import api from '../api/api';
 import MyInput from '../components/MyInput';
 import { useSettingStore } from '../stores/settingStore';
-import { CustomToast } from '../components/CustomToast'; // Import komponen CustomToast
+import { CustomToast } from '../components/CustomToast';
 import { useLock } from '../context/LockContext';
 
 export default function LoginScreen() {
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
     const { width } = useWindowDimensions();
-
     const { setLockEnabled } = useLock();
-
-    // Deteksi Layar Besar (Tablet Landscape / Web)
     const isLargeScreen = width >= 768;
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
 
-    // --- STATE UNTUK CUSTOM TOAST ---
+    // --- STATE UNTUK VALIDASI TENANT ---
+    // 'checking' | 'valid' | 'inactive' | 'not_found'
+    const [tenantStatus, setTenantStatus] = useState<'checking' | 'valid' | 'inactive' | 'not_found'>('checking');
+
+    // --- STATE UNTUK POP-UP PEMILIHAN CABANG ---
+    const [showBranchModal, setShowBranchModal] = useState(false);
+    const [branches, setBranches] = useState<any[]>([]);
+    const [tempAuthData, setTempAuthData] = useState<{ token: string; refreshToken: string; user: any } | null>(null);
+    const [loadingBranches, setLoadingBranches] = useState(false);
+
     const [toast, setToast] = useState({
         visible: false,
         message: '',
@@ -43,9 +49,55 @@ export default function LoginScreen() {
     useEffect(() => {
         setLockEnabled(false);
         fetchSettings();
-        const clearSession = async () => {
-            await AsyncStorage.multiRemove(['user', 'token']);
+
+        // --- LOGIKA VERIFIKASI TENANT KE BACKEND API SAAT PERTAMA KALI LOAD ---
+        const verifyTenant = async () => {
+            try {
+                // Ekstrak slug dari hostname (Web) atau gunakan env fallback untuk testing mobile
+                let currentSlug = "";
+                if (Platform.OS === 'web') {
+                    currentSlug = window.location.hostname.split('.')[0];
+                } else {
+                    currentSlug = process.env.EXPO_PUBLIC_TENANT_SLUG || "kopi-sunda-staging";
+                }
+
+                // Hit API Backend Anda (Route yang baru dibuat: /tenant/verify)
+                const res = await api.get(`/tenant/verify?slug=${currentSlug}`);
+                const { success, data, tenantIsActive } = res.data;
+
+                if (success && data) {
+                    if (data.exists === false) {
+                        setTenantStatus('not_found');
+                    } else if (data.isActive === false || tenantIsActive === false) {
+                        setTenantStatus('inactive');
+                    } else {
+                        setTenantStatus('valid');
+                    }
+                }
+            } catch (error: any) {
+                // Tangkap response error (404 Not Found atau 403 Inactive) dari backend
+                if (error.response) {
+                    const status = error.response.status;
+                    const resData = error.response.data;
+
+                    if (status === 404 || resData?.data?.exists === false) {
+                        setTenantStatus('not_found');
+                    } else if (status === 403 || resData?.tenantIsActive === false) {
+                        setTenantStatus('inactive');
+                    } else {
+                        setTenantStatus('not_found'); // Fallback jika error lain
+                    }
+                } else {
+                    setTenantStatus('not_found');
+                }
+            }
         };
+
+        const clearSession = async () => {
+            await AsyncStorage.multiRemove(['user', 'token', 'refreshToken']);
+        };
+
+        verifyTenant();
         clearSession();
 
         return () => {
@@ -53,7 +105,6 @@ export default function LoginScreen() {
         };
     }, []);
 
-    // Helper untuk menampilkan toast
     const showToast = (message: string, type: 'success' | 'error') => {
         setToast({ visible: true, message, type });
     };
@@ -72,33 +123,119 @@ export default function LoginScreen() {
         setLoading(true);
 
         try {
-            // 1. Kirim request login ke backend
             const response = await api.post('/auth/login', { email, password });
-
-            // 2. Destructure data (Pastikan mengambil refreshToken juga)
             const { token, refreshToken, user } = response.data;
 
-            // 3. Simpan seluruh data ke AsyncStorage
-            // PENTING: Key harus sama dengan yang dipanggil di api.ts interceptor
+            // Pasang token di header default sementara agar bisa memuat cabang jika diperlukan
+            api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+            // --- LOGIKA CEK MULTI-CABANG ---
+            // Jika user adalah OWNER / MANAGER atau belum terikat pada branchId tertentu
+            if (user.jobPosition === 'OWNER' || user.jobPosition === 'MANAGER' || !user.branchId) {
+                setLoadingBranches(true);
+                try {
+                    const branchRes = await api.get('/branches');
+                    const fetchedBranches = branchRes.data;
+
+                    if (fetchedBranches.length > 1) {
+                        setBranches(fetchedBranches);
+                        // Fallback aman: gunakan "" (string kosong) jika refreshToken bernilai undefined dari backend
+                        setTempAuthData({ token, refreshToken: refreshToken || "", user });
+                        setShowBranchModal(true);
+                        setLoadingBranches(false);
+                        setLoading(false);
+                        return;
+                    } else if (fetchedBranches.length === 1) {
+                        user.branchId = fetchedBranches[0].id;
+                        user.branch = fetchedBranches[0];
+                    }
+                } catch (err) {
+                    console.error("Gagal memuat daftar cabang:", err);
+                }
+                setLoadingBranches(false);
+            }
+
+            // --- PENYIMPANAN SESI AMAN (MENCEGAH CRASH) ---
+            // Pastikan tidak mengirim nilai undefined ke AsyncStorage
             await Promise.all([
                 AsyncStorage.setItem('token', token),
-                AsyncStorage.setItem('refreshToken', refreshToken), // Simpan kunci sesi panjang
-                AsyncStorage.setItem('user', JSON.stringify(user))    // Simpan profil user
+                AsyncStorage.setItem('refreshToken', refreshToken || ""),
+                AsyncStorage.setItem('user', JSON.stringify(user))
             ]);
 
-            // 4. Pindah ke halaman Dashboard
             navigation.replace('Dashboard');
 
         } catch (error: any) {
-            // Handle error seperti kredensial salah atau server mati
-            const msg = error.response?.data?.message || "Gagal terhubung ke server";
+            // Tampilkan pesan error spesifik dari server jika tersedia
+            const msg = error.response?.data?.message || "Gagal terhubung ke server (Periksa URL atau Koneksi)";
             showToast(msg, "error");
-        } finally {
             setLoading(false);
         }
     };
 
-    if (!settings.isLoaded) {
+    // --- HANDLER SAAT CABANG DIPILIH DARI POP-UP ---
+    const handleSelectBranch = async (selectedBranch: any) => {
+        if (!tempAuthData) return;
+        setShowBranchModal(false);
+        setLoading(true);
+
+        const updatedUser = {
+            ...tempAuthData.user,
+            branchId: selectedBranch.id,
+            branch: selectedBranch
+        };
+
+        await Promise.all([
+            AsyncStorage.setItem('token', tempAuthData.token),
+            AsyncStorage.setItem('refreshToken', tempAuthData.refreshToken),
+            AsyncStorage.setItem('user', JSON.stringify(updatedUser))
+        ]);
+
+        navigation.replace('Dashboard');
+    };
+
+    // ==========================================
+    // UI HALAMAN 404 NOT FOUND (Elegan & Interaktif)
+    // ==========================================
+    if (tenantStatus === 'not_found') {
+        return (
+            <View className="items-center justify-center flex-1 bg-slate-900">
+                <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+
+                {/* Background Decoration */}
+                <View className="absolute w-64 h-64 rounded-full bg-indigo-500/10 blur-3xl -top-10 -left-10" />
+                <View className="absolute w-64 h-64 rounded-full bg-rose-500/10 blur-3xl -bottom-10 -right-10" />
+
+                <View className="items-center px-6">
+                    <View className="items-center justify-center w-32 h-32 mb-6 border rounded-full bg-slate-800/50 border-slate-700/50 shadow-2xl">
+                        <SearchX size={60} color="#94A3B8" />
+                    </View>
+
+                    <Text className="text-[80px] md:text-[100px] font-black tracking-tighter text-rose-500">
+                        404
+                    </Text>
+
+                    <Text className="mt-4 text-2xl font-bold text-center text-white md:text-3xl">
+                        CARI APAAN BANG??
+                    </Text>
+
+                    <Text className="mt-2 text-base font-medium text-center text-slate-400 md:text-lg">
+                        SALAH SUBDOMAIN TUH, TIDAK TERDAFTAR!
+                    </Text>
+
+                    <TouchableOpacity
+                        onPress={() => Platform.OS === 'web' ? window.location.reload() : null}
+                        className="px-8 py-4 mt-12 border rounded-full bg-white/5 border-white/10 active:bg-white/10"
+                    >
+                        <Text className="text-sm font-bold tracking-widest text-white uppercase">Refresh Halaman</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        );
+    }
+
+    // Tampilkan Loading jika masih mengecek Tenant ATAU Setting belum terload
+    if (tenantStatus === 'checking' || !settings.isLoaded) {
         return (
             <View className="items-center justify-center flex-1 bg-gray-50">
                 <ActivityIndicator size="large" color="#4F46E5" />
@@ -109,38 +246,20 @@ export default function LoginScreen() {
     const primaryColor = settings.themePrimaryColor || '#4F46E5';
     const secondaryColor = settings.themeSecondaryColor || '#0F172A';
 
-    // --- BAGIAN UI 1: BRANDING (Kiri/Atas) ---
     const renderBranding = () => (
         <View className="relative items-center justify-center flex-1 w-full h-full overflow-hidden bg-slate-900">
-            {/* Background Image / Gradient */}
             {settings.loginBgUrl ? (
-                <ImageBackground
-                    source={{ uri: settings.loginBgUrl }}
-                    className="absolute w-full h-full"
-                    resizeMode="cover"
-                >
-                    <LinearGradient
-                        colors={['rgba(15, 23, 42, 0.5)', 'rgba(15, 23, 42, 0.95)']}
-                        className="absolute w-full h-full"
-                    />
+                <ImageBackground source={{ uri: settings.loginBgUrl }} className="absolute w-full h-full" resizeMode="cover">
+                    <LinearGradient colors={['rgba(15, 23, 42, 0.5)', 'rgba(15, 23, 42, 0.95)']} className="absolute w-full h-full" />
                 </ImageBackground>
             ) : (
-                <LinearGradient
-                    colors={[primaryColor, secondaryColor]}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    className="absolute w-full h-full"
-                />
+                <LinearGradient colors={[primaryColor, secondaryColor]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} className="absolute w-full h-full" />
             )}
 
-            {/* Content Branding */}
             <View className="z-10 items-center w-full max-w-lg p-8">
                 <View className="items-center justify-center w-24 h-24 mb-6 overflow-hidden border rounded-full shadow-2xl bg-white/10 backdrop-blur-xl border-white/20">
                     {settings.logoUrl ? (
-                        <Image
-                            source={{ uri: settings.logoUrl }}
-                            className="w-full h-full"
-                            resizeMode="cover" // Gunakan cover agar gambar memenuhi lingkaran
-                        />
+                        <Image source={{ uri: settings.logoUrl }} className="w-full h-full" resizeMode="cover" />
                     ) : (
                         <Store color="white" size={40} />
                     )}
@@ -159,7 +278,6 @@ export default function LoginScreen() {
         </View>
     );
 
-    // --- BAGIAN UI 2: FORM INPUT (Kanan/Bawah) ---
     const renderForm = () => (
         <ScrollView showsVerticalScrollIndicator={false} className="w-full max-w-sm">
             <View className="mb-8">
@@ -168,7 +286,23 @@ export default function LoginScreen() {
                     Masuk untuk mengelola {settings.storeName}
                 </Text>
             </View>
-            <View>
+
+            {/* ========================================== */}
+            {/* UI PERINGATAN TENANT TIDAK AKTIF / SUSPEND  */}
+            {/* ========================================== */}
+            {tenantStatus === 'inactive' && (
+                <View className="p-4 mb-6 bg-red-50 border border-red-200 rounded-2xl">
+                    <View className="flex-row items-center mb-2">
+                        <AlertCircle color="#EF4444" size={20} />
+                        <Text className="ml-2 font-bold text-red-600">Akses Tenant Dinonaktifkan</Text>
+                    </View>
+                    <Text className="text-sm leading-5 text-red-700">
+                        Tenant Dinonaktifkan karena ada tagihan menunggu atau belum lunas. Mohon lakukan pembayaran terlebih dahulu melalui Control Plane.
+                    </Text>
+                </View>
+            )}
+
+            <View style={{ opacity: tenantStatus === 'inactive' ? 0.6 : 1 }}>
                 <MyInput
                     label="Email"
                     placeholder="admin@example.com"
@@ -178,6 +312,7 @@ export default function LoginScreen() {
                     autoCapitalize="none"
                     primaryColor={primaryColor}
                     secondaryColor={secondaryColor}
+                    editable={tenantStatus !== 'inactive'}
                 />
                 <View>
                     <MyInput
@@ -189,9 +324,10 @@ export default function LoginScreen() {
                         icon={<Lock size={20} color="#64748B" />}
                         primaryColor={primaryColor}
                         secondaryColor={secondaryColor}
+                        editable={tenantStatus !== 'inactive'}
                     />
-                    <TouchableOpacity className="self-end mt-2">
-                        <Text className="text-sm font-medium" style={{ color: primaryColor }}>
+                    <TouchableOpacity className="self-end mt-2" disabled={tenantStatus === 'inactive'}>
+                        <Text className="text-sm font-medium" style={{ color: tenantStatus === 'inactive' ? '#94A3B8' : primaryColor }}>
                             Lupa Password?
                         </Text>
                     </TouchableOpacity>
@@ -200,16 +336,19 @@ export default function LoginScreen() {
 
             <TouchableOpacity
                 onPress={handleLogin}
-                disabled={loading}
-                className="flex-row items-center justify-center mt-8 transition-all transform shadow-lg h-14 rounded-2xl shadow-blue-900/20 active:scale-95"
-                style={{ backgroundColor: primaryColor }}
+                disabled={loading || loadingBranches || tenantStatus === 'inactive'}
+                className={`flex-row items-center justify-center mt-8 transition-all transform h-14 rounded-2xl ${tenantStatus === 'inactive' ? 'bg-slate-300' : 'shadow-lg shadow-blue-900/20 active:scale-95'
+                    }`}
+                style={{ backgroundColor: tenantStatus === 'inactive' ? '#CBD5E1' : primaryColor }}
             >
-                {loading ? (
+                {loading || loadingBranches ? (
                     <ActivityIndicator color="white" />
                 ) : (
                     <>
-                        <Text className="mr-2 text-lg font-bold text-white">Masuk Aplikasi</Text>
-                        <ArrowRight color="white" size={20} strokeWidth={2.5} />
+                        <Text className="mr-2 text-lg font-bold text-white">
+                            {tenantStatus === 'inactive' ? 'Akses Terkunci' : 'Masuk Aplikasi'}
+                        </Text>
+                        {tenantStatus !== 'inactive' && <ArrowRight color="white" size={20} strokeWidth={2.5} />}
                     </>
                 )}
             </TouchableOpacity>
@@ -222,12 +361,10 @@ export default function LoginScreen() {
         </ScrollView>
     );
 
-    // --- RENDER UTAMA ---
     return (
         <View className="flex-1 bg-white">
-            <StatusBar barStyle={isLargeScreen ? "light-content" : "light-content"} translucent backgroundColor="transparent" />
+            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-            {/* INTEGRASI CUSTOM TOAST */}
             <CustomToast
                 visible={toast.visible}
                 message={toast.message}
@@ -235,38 +372,59 @@ export default function LoginScreen() {
                 onHide={() => setToast({ ...toast, visible: false })}
             />
 
+            {/* --- MODAL POP-UP PEMILIHAN CABANG --- */}
+            <Modal visible={showBranchModal} transparent animationType="slide">
+                <View className="items-center justify-center flex-1 px-4 bg-black/60 backdrop-blur-sm">
+                    <View className="w-full max-w-md p-6 bg-white rounded-[28px] shadow-2xl max-h-[80%]">
+                        <Text className="mb-2 text-xl font-black tracking-tight text-center text-slate-900">Pilih Cabang Aktif</Text>
+                        <Text className="mb-6 text-xs text-center text-slate-500">
+                            Akun Anda memiliki akses ke beberapa cabang. Silakan pilih cabang yang ingin Anda kelola saat ini.
+                        </Text>
+
+                        <FlatList
+                            data={branches}
+                            keyExtractor={(item) => item.id}
+                            showsVerticalScrollIndicator={false}
+                            renderItem={({ item }) => (
+                                <TouchableOpacity
+                                    onPress={() => handleSelectBranch(item)}
+                                    className="flex-row items-center justify-between p-4 mb-3 border border-slate-100 bg-slate-50 rounded-2xl active:bg-indigo-50 active:border-indigo-100"
+                                >
+                                    <View className="flex-row items-center flex-1 mr-3">
+                                        <View className="items-center justify-center w-10 h-10 mr-3 bg-white border rounded-full border-slate-200">
+                                            <MapPin size={18} color={primaryColor} />
+                                        </View>
+                                        <View className="flex-1">
+                                            <Text className="text-sm font-bold text-slate-800">{item.name}</Text>
+                                            {item.address && <Text className="text-[11px] text-slate-400 mt-0.5" numberOfLines={1}>{item.address}</Text>}
+                                        </View>
+                                    </View>
+                                    <ArrowRight size={16} color="#94A3B8" />
+                                </TouchableOpacity>
+                            )}
+                        />
+                    </View>
+                </View>
+            </Modal>
+
             {isLargeScreen ? (
-                // ==========================================
-                // LAYOUT 1: TABLET LANDSCAPE / WEB (SPLIT)
-                // ==========================================
                 <View className="flex-row flex-1">
-                    {/* Kiri: Branding Full Height */}
                     <View className="flex-1">
                         {renderBranding()}
                     </View>
-
-                    {/* Kanan: Form Center */}
                     <View className="items-center justify-center flex-1 p-12 bg-white">
                         {renderForm()}
                     </View>
                 </View>
             ) : (
-                // ==========================================
-                // LAYOUT 2: MOBILE / TABLET PORTRAIT (STACK)
-                // ==========================================
                 <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} className="flex-1">
                     <ScrollView contentContainerStyle={{ flexGrow: 1 }} bounces={false}>
-
-                        {/* Header Branding (Tinggi Fixed) */}
                         <View className="h-[45vh] w-full relative">
                             {renderBranding()}
                         </View>
-
-                        {/* Form Container (Melengkung ke atas menutupi header) */}
                         <View className="flex-1 bg-white -mt-10 rounded-t-[30px] px-6 pt-10 pb-6 items-center shadow-2xl">
                             {renderForm()}
                         </View>
-
                     </ScrollView>
                 </KeyboardAvoidingView>
             )}
