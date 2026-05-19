@@ -12,7 +12,7 @@ interface POSState {
 
     // Actions
     fetchAvailablePromos: (branchId: string) => Promise<void>;
-    fetchOpenTickets: () => Promise<void>;
+    fetchOpenTickets: (branchId?: string) => Promise<void>;
     applyBundleLogic: (currentCart: any[]) => any[];
     addToCart: (product: any, variant: any) => void;
     updateQty: (variantId: number, delta: number) => void;
@@ -33,12 +33,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
     openTickets: [],
     availablePromotions: [],
 
-    // --- 1. LOGIKA RE-KALKULASI BUNDLE (REAKTIF) ---
     applyBundleLogic: (currentCart: any[]) => {
         const promotions = get().availablePromotions || [];
         const bundlePromos = promotions.filter(p => p.type === 'BUNDLE' && p.isActive);
 
-        // Langkah A: Kembalikan semua item ke harga dasar (Harga setelah diskon produk, sebelum bundle)
         let updatedCart = currentCart.map(item => ({
             ...item,
             price: item.priceAfterProductDiscount, 
@@ -50,21 +48,18 @@ export const usePOSStore = create<POSState>((set, get) => ({
             return updatedCart.map(i => ({ ...i, subtotal: i.quantity * i.price }));
         }
 
-        // Langkah B: Proses pencarian paket bundle
         bundlePromos.forEach((promo: any) => {
             const targetVariantIds = promo.targets?.map((t: any) => t.variantId) || [];
             if (targetVariantIds.length === 0) return;
 
             let canApplyMore = true;
             while (canApplyMore) {
-                // Cari item di cart yang tersedia untuk masuk bundle ini
                 const itemsMatch = updatedCart.filter(item => 
                     targetVariantIds.includes(item.variantId) && !item.isBundleApplied
                 );
 
                 const uniqueMatchedIds = new Set(itemsMatch.map(i => i.variantId));
 
-                // Jika semua syarat item unik dalam bundle terpenuhi
                 if (uniqueMatchedIds.size === targetVariantIds.length) {
                     const bundleOriginalTotal = itemsMatch.reduce((sum, i) => sum + i.originalPrice, 0);
                     
@@ -72,12 +67,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
                         ? (bundleOriginalTotal * promo.discountPct) / 100
                         : Number(promo.discountAmt || 0);
 
-                    // Terapkan diskon ke item-item terkait di dalam cart
                     targetVariantIds.forEach((vId: number) => {
                         const cartIdx = updatedCart.findIndex(i => i.variantId === vId && !i.isBundleApplied);
                         if (cartIdx !== -1) {
                             const item = updatedCart[cartIdx];
-                            // Hitung pembagian diskon proporsional (agar HPP & Laba tetap akurat di backend)
                             const itemShare = item.originalPrice / bundleOriginalTotal;
                             const discountForThisItem = bundleDiscountAmt * itemShare;
 
@@ -92,11 +85,9 @@ export const usePOSStore = create<POSState>((set, get) => ({
             }
         });
 
-        // Langkah C: Hitung subtotal akhir berdasarkan harga yang sudah dimodifikasi bundle
         return updatedCart.map(i => ({ ...i, subtotal: i.quantity * i.price }));
     },
 
-    // --- 2. ADD TO CART DENGAN DETEKSI PRODUCT_DISCOUNT ---
     addToCart: (product: any, variant: any) => {
         const state = get();
         const promotions = state.availablePromotions || [];
@@ -106,7 +97,6 @@ export const usePOSStore = create<POSState>((set, get) => ({
         let isProductDiscounted = false;
         let appliedProductId = null;
 
-        // Cari apakah ada promo PRODUCT_DISCOUNT untuk variant ini
         const productPromo = promotions.find(p => 
             p.type === 'PRODUCT_DISCOUNT' && 
             p.isActive && 
@@ -150,11 +140,9 @@ export const usePOSStore = create<POSState>((set, get) => ({
             }];
         }
 
-        // Jalankan logika bundle untuk mengecek apakah tambahan item ini melengkapi paket
         set({ cart: state.applyBundleLogic(newCart) });
     },
 
-    // --- 3. UPDATE QUANTITY ---
     updateQty: (variantId: number, delta: number) => {
         const newCart = get().cart.map((i: any) => {
             if (i.variantId === variantId) {
@@ -167,7 +155,6 @@ export const usePOSStore = create<POSState>((set, get) => ({
         set({ cart: get().applyBundleLogic(newCart) });
     },
 
-    // --- 4. UPDATE NOTES ---
     updateItemNotes: (variantId: number, notes: string) => {
         set((state) => ({
             cart: state.cart.map((item) =>
@@ -176,7 +163,6 @@ export const usePOSStore = create<POSState>((set, get) => ({
         }));
     },
 
-    // --- 5. FETCH DATA PROMO ---
     fetchAvailablePromos: async (branchId: string) => {
         try {
             const res = await api.get('/promotions', { params: { branchId } });
@@ -186,17 +172,20 @@ export const usePOSStore = create<POSState>((set, get) => ({
         }
     },
 
-    // --- 6. TICKET / ORDER MANAGEMENT ---
-    fetchOpenTickets: async () => {
+    // --- FASE 1: PERBAIKAN ENDPOINT FETCH TICKET ---
+    fetchOpenTickets: async (branchId?: string) => {
         try {
-            const res = await api.get('/orders/open-tickets');
-            set({ openTickets: res.data || [] });
+            const params: any = { status: 'PENDING' };
+            if (branchId) params.branchId = branchId;
+            
+            const res = await api.get('/pos/orders', { params });
+            // Backend mengirim data dalam bentuk { success: true, data: [...] }
+            set({ openTickets: res.data.data || [] });
         } catch (e) { console.error(e); }
     },
 
     loadTicket: (order: any) => {
         const loadedCart = (order.items || []).map((i: any) => {
-            // Rekonstruksi data item dari database
             const originalPrice = Number(i.variant?.price || i.price);
             return {
                 variantId: i.variantId,
@@ -204,7 +193,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
                 variantName: i.variant?.name || '',
                 price: Number(i.price), 
                 originalPrice: originalPrice,
-                priceAfterProductDiscount: Number(i.price), // Saat load, kita asumsikan harga simpanan adalah harga dasar diskon produk
+                priceAfterProductDiscount: Number(i.price),
                 quantity: i.quantity,
                 subtotal: Number(i.subtotal),
                 notes: i.notes || '',
@@ -217,7 +206,6 @@ export const usePOSStore = create<POSState>((set, get) => ({
         set({
             currentOrder: order,
             selectedMember: order.member || null,
-            // Hitung ulang bundle saat load tiket (antisipasi jika promo sudah berakhir)
             cart: get().applyBundleLogic(loadedCart),
             isCartVisible: true
         });

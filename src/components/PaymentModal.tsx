@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, TextInput, useWindowDimensions, Alert } from 'react-native';
-import { X, ShoppingBag, Search, CheckCircle2, User, AlertCircle, Printer, Star, Tag, Ticket } from 'lucide-react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, TextInput, useWindowDimensions } from 'react-native';
+import { X, ShoppingBag, Search, CheckCircle2, User, AlertCircle, Printer, Star, Tag } from 'lucide-react-native';
 import MyInput from './MyInput';
 import { usePOSStore } from '../stores/posStore';
 import { usePromotionStore } from '../stores/promotionStore';
@@ -9,7 +9,6 @@ import { useSettingStore } from '../stores/settingStore';
 import { useReceiptStore } from '../stores/receiptStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
-// PERUBAHAN: Import keduanya dari printerDriver agar sesuai dengan file sebelumnya
 import { generateReceiptHTML, executePrint } from '../utils/printerDriver';
 
 const SHORTCUTS = [10000, 20000, 50000, 100000, 200000, 500000];
@@ -17,17 +16,15 @@ const SHORTCUTS = [10000, 20000, 50000, 100000, 200000, 500000];
 export default function PaymentModal({ visible, total, orderType, onClose }: any) {
     const { width, height } = useWindowDimensions();
 
-    // Breakpoints responsif untuk mendukung Split Screen
     const isDesktop = width >= 1024;
     const isTablet = width >= 768;
-    // Jika tinggi layar sangat pendek (Landscape Split Screen), kita paksa mode kolom
     const isHorizontalSplit = height < 500;
     const useTwoColumns = isTablet && !isHorizontalSplit;
 
     const pos = usePOSStore();
     const { settings } = useSettingStore();
     const { getPrintPayload } = usePrintStore();
-    const { fetchPromotionsByType, promotions } = usePromotionStore(); // Ambil promotions dari store
+    const { fetchPromotionsByType, promotions } = usePromotionStore();
     const { fetchSetting: fetchReceiptSetting, setting: receiptSetting } = useReceiptStore();
 
     const [cashReceived, setCashReceived] = useState('');
@@ -38,11 +35,8 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
     const [selectedPromo, setSelectedPromo] = useState<any>(null);
     const [manualCustomerName, setManualCustomerName] = useState('');
 
-    // --- STATE POINT LOYALTY ---
     const [pointsToUse, setPointsToUse] = useState('');
     const [savedOrderId, setSavedOrderId] = useState<string | null>(null);
-
-    // State khusus print agar sama dengan history screen
     const [isPrinting, setIsPrinting] = useState(false);
 
     const [alertConfig, setAlertConfig] = useState<{
@@ -60,7 +54,7 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                 let branchId = undefined;
                 if (userData) {
                     const user = JSON.parse(userData);
-                    branchId = user.branch?.id;
+                    branchId = user.branch?.id || user.branchId;
                 }
                 await fetchPromotionsByType(branchId, 'TRANSACTION');
                 if (pos.currentOrder?.customerName) setManualCustomerName(pos.currentOrder.customerName);
@@ -124,63 +118,61 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
 
     const change = Number(cashReceived) - finalCalculations.grandTotal;
 
+    // --- FASE 3: PERBAIKAN LOGIKA TRANSAKSI ---
     const handleFinish = async () => {
         if (paymentMethod === 'CASH' && change < 0) {
             return triggerAlert('Peringatan', 'Uang tunai kurang!', 'warning');
         }
 
         const pointsNum = parseInt(pointsToUse) || 0;
-
         if (pos.selectedMember && pointsNum > pos.selectedMember.points) {
             return triggerAlert('Peringatan', 'Saldo poin member tidak mencukupi!', 'warning');
         }
 
         setIsProcessing(true);
         try {
-            const subtotalRaw = pos.cart.reduce((acc: number, i: any) =>
-                acc + (Number(i.originalPrice || i.price) * i.quantity), 0
-            );
+            const userData = await AsyncStorage.getItem('user');
+            const user = userData ? JSON.parse(userData) : null;
+            const branchIdToUse = user?.branch?.id || user?.branchId;
 
-            const payload = {
-                id: pos.currentOrder?.id || null,
-                items: pos.cart.map((i: any) => ({
-                    variantId: i.variantId,
-                    quantity: i.quantity,
-                    price: i.price,
-                    hpp: i.hpp,
-                    originalPrice: i.originalPrice || i.price,
-                    subtotal: i.subtotal,
-                    appliedBundleId: i.appliedBundleId || null,
-                    appliedProductId: i.appliedProductId || null,
-                    notes: i.notes || ""
-                })),
-                customerName: pos.selectedMember ? pos.selectedMember.name : (manualCustomerName || 'Walk-in Customer'),
-                orderType: orderType,
-                platformName: 'POS',
-                paymentMethod: paymentMethod,
-                paymentStatus: 'PAID',
-                status: 'PENDING',
-                subtotal: subtotalRaw,
-                discount: finalCalculations.totalDiscount,
-                tax: 0,
-                serviceCharge: 0,
-                totalAmount: finalCalculations.grandTotal,
-                memberId: pos.selectedMember?.id || null,
-                promotionId: selectedPromo?.id || null,
-                pointsUsed: pointsNum
-            };
+            let orderData;
 
-            const res = await api.post('/orders/pos', payload);
-            const newId = res.data.id;
-            setSavedOrderId(newId);
+            // Skenario 1: Bayar Tiket yang Sedang Terbuka (Open Bill)
+            if (pos.currentOrder?.id) {
+                const payload = {
+                    status: 'COMPLETED', // Asumsi pesanan beres saat dilunasi
+                    paymentStatus: 'PAID',
+                    paymentMethod: paymentMethod,
+                };
+                const res = await api.patch(`/pos/orders/${pos.currentOrder.id}/status`, payload);
+                orderData = res.data.data;
+            } 
+            // Skenario 2: Transaksi Langsung Lunas
+            else {
+                const payload = {
+                    branchId: branchIdToUse,
+                    orderType: orderType,
+                    customerName: pos.selectedMember ? pos.selectedMember.name : (manualCustomerName || 'Walk-in Customer'),
+                    paymentMethod: paymentMethod,
+                    paymentStatus: 'PAID',
+                    items: pos.cart.map((i: any) => ({
+                        variantId: i.variantId,
+                        quantity: i.quantity,
+                    }))
+                };
+                const res = await api.post('/pos/orders', payload);
+                orderData = res.data.data;
+            }
 
-            onClose();
+            setSavedOrderId(orderData.id);
+            onClose(); // Tutup modal payment
 
+            // Munculkan struk sukses
             setTimeout(() => {
                 setAlertConfig({
                     visible: true,
                     title: 'Transaksi Berhasil',
-                    message: `Invoice: ${res.data.invoiceNumber}\nKembalian: Rp ${Math.max(0, change).toLocaleString('id-ID')}`,
+                    message: `Invoice: ${orderData.invoiceNumber}\nKembalian: Rp ${Math.max(0, change).toLocaleString('id-ID')}`,
                     type: 'success'
                 });
                 pos.resetPOS();
@@ -236,7 +228,6 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                         }}
                         className="bg-white rounded-[24px] md:rounded-[32px] overflow-hidden shadow-2xl relative"
                     >
-                        {/* TOMBOL CLOSE */}
                         {useTwoColumns ? (
                             <TouchableOpacity onPress={onClose} className="absolute z-50 p-2 bg-white border rounded-full shadow-sm border-slate-100 top-4 right-4">
                                 <X size={18} color="#64748B" />
@@ -251,10 +242,8 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
                             <View className={`${useTwoColumns ? 'flex-row' : 'flex-col'} flex-1`}>
 
-                                {/* KOLOM KIRI: RINCIAN, MEMBER & PROMO */}
+                                {/* KOLOM KIRI */}
                                 <View className={`${useTwoColumns ? 'flex-[1.2] border-r border-slate-50' : 'w-full'} p-4 md:p-6 bg-slate-50/50`}>
-
-                                    {/* RINCIAN PESANAN */}
                                     <View className="p-4 mb-4 bg-white border shadow-sm border-slate-100 rounded-2xl">
                                         <View className="flex-row items-center mb-3">
                                             <ShoppingBag size={14} color="#64748B" />
@@ -290,7 +279,7 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                                             <View className="flex-row items-center h-10 px-3 border bg-slate-50 rounded-xl border-slate-200">
                                                 <Search size={14} color="#94A3B8" />
                                                 <TextInput
-                                                    placeholder="Cari Member..."
+                                                    placeholder="Cari Member (No. HP)..."
                                                     placeholderTextColor="#94A3B8"
                                                     className="flex-1 h-full py-0 ml-2 text-xs font-bold text-slate-700"
                                                     value={memberPhone}
@@ -313,7 +302,7 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                                         )}
                                     </View>
 
-                                    {/* PROMO TRANSAKSI SECTION (TAMBAHAN BARU) */}
+                                    {/* PROMO TRANSAKSI */}
                                     <View className="p-4 mb-4 bg-white border shadow-sm border-slate-100 rounded-2xl">
                                         <View className="flex-row items-center mb-3">
                                             <Tag size={14} color="#64748B" />
@@ -362,7 +351,7 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                                     </View>
                                 </View>
 
-                                {/* KOLOM KANAN: INPUT CASH & SUMMARY */}
+                                {/* KOLOM KANAN */}
                                 <View className={`${useTwoColumns ? 'flex-1' : 'w-full'} p-4 md:p-6 bg-white justify-between`}>
                                     <View>
                                         {paymentMethod === 'CASH' && (
@@ -373,7 +362,6 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                                                     value={cashReceived}
                                                     onChangeText={setCashReceived}
                                                 />
-
                                                 <View className="flex-row flex-wrap gap-1.5 mt-2">
                                                     {(() => {
                                                         const exactAmount = finalCalculations.grandTotal.toString();
@@ -403,7 +391,6 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                                             </View>
                                         )}
 
-                                        {/* SUMMARY BOX */}
                                         <View className="p-4 bg-slate-900 rounded-[24px] mt-4 shadow-xl">
                                             <View className="flex-row justify-between mb-2">
                                                 <Text className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Subtotal</Text>
@@ -461,7 +448,6 @@ export default function PaymentModal({ visible, total, orderType, onClose }: any
                 </KeyboardAvoidingView>
             </Modal>
 
-            {/* MODAL NOTIFIKASI */}
             <Modal visible={alertConfig.visible} transparent animationType="fade">
                 <View className="items-center justify-center flex-1 p-6 bg-black/50">
                     <View className="bg-white w-full max-w-[320px] rounded-[40px] p-8 items-center shadow-2xl">

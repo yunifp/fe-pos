@@ -5,7 +5,8 @@ import BranchFormModal from '../components/BranchFormModal';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { CustomToast } from '../components/CustomToast';
 import MainLayout from '../components/MainLayout';
-import { Plus, Edit, Trash2, MapPin, Phone, Building, Globe, Layers } from 'lucide-react-native';
+import FloatingActionButton from '../components/FloatingActionButton'; // Import Komponen FAB yang konsisten
+import { Plus, Edit, Trash2, MapPin, Phone, Building, Layers } from 'lucide-react-native';
 import { useSettingStore } from '../stores/settingStore';
 
 export default function BranchListScreen() {
@@ -41,15 +42,23 @@ export default function BranchListScreen() {
                 showToast('Cabang baru ditambahkan', 'success');
             }
             fetchBranches();
-        } catch (error) { showToast('Terjadi kesalahan sistem', 'error'); }
+        } catch (error: any) { 
+            // Menangkap pesan error dari Zod jika ada
+            const errMsg = error.response?.data?.message || 'Gagal menyimpan cabang';
+            showToast(errMsg, 'error'); 
+        }
     };
 
     const confirmDelete = (id: string) => setDeleteModal({ visible: true, branchId: id });
+    
     const executeDelete = async () => {
         try {
             await deleteBranch(deleteModal.branchId);
             showToast('Cabang berhasil dihapus', 'success');
-        } catch (e) { showToast('Gagal menghapus cabang', 'error'); }
+        } catch (e: any) { 
+            const errMsg = e.response?.data?.message || 'Gagal menghapus cabang karena terikat data lain.';
+            showToast(errMsg, 'error'); 
+        }
         setDeleteModal({ visible: false, branchId: '' });
     };
 
@@ -57,51 +66,45 @@ export default function BranchListScreen() {
         const itemWidth = 100 / numColumns;
         return (
             <View style={{ width: `${itemWidth}%`, padding: 6 }}>
-                <View className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex-col justify-between h-full">
+                <View className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex-col justify-between h-full">
                     <View>
                         <View className="flex-row items-start justify-between mb-3">
                             <View className="flex-row items-center flex-1 pr-2">
-                                <View className="items-center justify-center w-10 h-10 mr-3 border border-blue-100 bg-blue-50 rounded-xl">
-                                    <Building size={18} color="#3B82F6" />
+                                <View className="items-center justify-center w-12 h-12 mr-3 border border-blue-100 bg-blue-50 rounded-2xl">
+                                    <Building size={20} color="#3B82F6" />
                                 </View>
                                 <View className="flex-1">
                                     <Text className="text-sm font-black text-slate-800 uppercase italic" numberOfLines={1}>{item.name}</Text>
-                                    <View className="bg-emerald-50 self-start px-1.5 py-0.5 rounded-md border border-emerald-100 mt-0.5">
-                                        <Text className="text-[8px] font-black text-emerald-600 tracking-widest">AKTIF</Text>
+                                    <View className="bg-emerald-50 self-start px-2 py-0.5 rounded-md border border-emerald-100 mt-1">
+                                        <Text className="text-[9px] font-black text-emerald-600 tracking-widest">AKTIF</Text>
                                     </View>
                                 </View>
                             </View>
-                            <View className="flex-row gap-1">
-                                <TouchableOpacity onPress={() => handleOpenEdit(item)} className="p-2 border bg-slate-50 rounded-lg border-slate-200 active:bg-indigo-50">
-                                    <Edit size={14} color="#64748B" />
+                            <View className="flex-row gap-1.5">
+                                <TouchableOpacity onPress={() => handleOpenEdit(item)} className="p-2.5 border bg-slate-50 rounded-xl border-slate-100 active:bg-indigo-50 transition-all">
+                                    <Edit size={16} color="#64748B" />
                                 </TouchableOpacity>
-                                <TouchableOpacity onPress={() => confirmDelete(item.id)} className="p-2 border border-rose-100 bg-rose-50 rounded-lg active:bg-rose-100">
-                                    <Trash2 size={14} color="#EF4444" />
+                                <TouchableOpacity onPress={() => confirmDelete(item.id)} className="p-2.5 border border-rose-100 bg-rose-50 rounded-xl active:bg-rose-100 transition-all">
+                                    <Trash2 size={16} color="#EF4444" />
                                 </TouchableOpacity>
                             </View>
                         </View>
 
                         <View className="p-3 border border-slate-50 bg-slate-50/50 rounded-xl">
-                            {item.address ? (
-                                <View className="flex-row items-start mb-2">
-                                    <MapPin size={12} color="#94A3B8" style={{ marginTop: 2 }} />
-                                    <Text className="flex-1 ml-2 text-[10px] font-bold leading-4 text-slate-500" numberOfLines={2}>{item.address}</Text>
-                                </View>
-                            ) : null}
+                            <View className="flex-row items-start mb-2">
+                                <MapPin size={12} color="#94A3B8" style={{ marginTop: 2 }} />
+                                <Text className="flex-1 ml-2 text-[10px] font-bold leading-4 text-slate-500" numberOfLines={2}>{item.address || 'Alamat belum diatur'}</Text>
+                            </View>
 
-                            <View className="flex-row flex-wrap gap-2 pt-2 border-t border-slate-100">
-                                {(item.latitude !== 0) && (
-                                    <View className="flex-row items-center">
-                                        <Globe size={10} color="#10B981" />
-                                        <Text className="ml-1 text-[9px] font-bold text-slate-400">GPS OK</Text>
-                                    </View>
-                                )}
+                            <View className="flex-row flex-wrap gap-3 pt-2 border-t border-slate-100">
                                 {item.phone ? (
                                     <View className="flex-row items-center">
-                                        <Phone size={10} color="#94A3B8" />
-                                        <Text className="ml-1 text-[9px] font-bold text-slate-400">{item.phone}</Text>
+                                        <Phone size={12} color="#94A3B8" />
+                                        <Text className="ml-1.5 text-[10px] font-bold text-slate-500">{item.phone}</Text>
                                     </View>
-                                ) : null}
+                                ) : (
+                                    <Text className="text-[9px] italic text-slate-400">Telepon belum diatur</Text>
+                                )}
                             </View>
                         </View>
                     </View>
@@ -116,17 +119,17 @@ export default function BranchListScreen() {
                 <CustomToast visible={toast.visible} message={toast.message} type={toast.type} onHide={() => setToast({ ...toast, visible: false })} />
 
                 {/* HEADER COMPACT */}
-                <View className="bg-white shadow-sm z-10 rounded-b-[30px] border-b border-slate-100">
-                    <View className="px-6 py-5 md:py-7 flex-row items-center justify-between">
+                <View className="bg-white shadow-sm z-10 rounded-b-[40px] border-b border-slate-100">
+                    <View className="px-6 py-6 md:py-8 flex-row items-center justify-between">
                         <View>
-                            <Text className="text-xl font-black tracking-tighter uppercase text-slate-900 leading-none">Outlet & Cabang</Text>
-                            <View className="flex-row items-center mt-1">
-                                <Layers size={10} color="#3B82F6" />
-                                <Text className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1.5">{branches.length} Lokasi Terdaftar</Text>
+                            <Text className="text-2xl font-black tracking-tighter uppercase text-slate-900 leading-none">Outlet & Cabang</Text>
+                            <View className="flex-row items-center mt-2">
+                                <Layers size={12} color="#3B82F6" />
+                                <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1.5">{branches.length} Lokasi Terdaftar</Text>
                             </View>
                         </View>
-                        <View className="items-center justify-center w-10 h-10 border border-blue-100 rounded-full bg-blue-50">
-                            <Building size={20} color="#3B82F6" />
+                        <View className="items-center justify-center w-12 h-12 border border-blue-100 rounded-full bg-blue-50">
+                            <Building size={24} color="#3B82F6" />
                         </View>
                     </View>
                 </View>
@@ -143,29 +146,22 @@ export default function BranchListScreen() {
                         contentContainerStyle={{ padding: 10, paddingBottom: 100, maxWidth: 1200, alignSelf: 'center', width: '100%' }}
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={
-                            <View className="items-center justify-center mt-20 opacity-30">
+                            <View className="items-center justify-center mt-24 opacity-40">
                                 <Building size={64} color="#CBD5E1" />
-                                <Text className="mt-4 text-xs font-black uppercase text-slate-400">Belum ada cabang</Text>
+                                <Text className="mt-4 text-xs font-black uppercase text-slate-400 tracking-widest">Belum ada cabang terdaftar</Text>
                             </View>
                         }
                     />
                 )}
 
-                <TouchableOpacity
-                    onPress={handleOpenAdd}
-                    activeOpacity={0.8}
-                    className="absolute bottom-6 right-6 w-14 h-14 rounded-2xl justify-center items-center shadow-lg active:scale-95"
-                    style={{
-                        backgroundColor: settings.themePrimaryColor,
-                        shadowColor: settings.themePrimaryColor,
-                        right: isDesktop ? (width - 1100) / 2 > 24 ? (width - 1100) / 2 : 24 : 24
-                    }}
-                >
-                    <Plus color="white" size={28} strokeWidth={3} />
-                </TouchableOpacity>
+                {/* FAB DISAMAKAN DENGAN SCREEN MATERIAL & PRODUCT */}
+                <FloatingActionButton 
+                    onPress={handleOpenAdd} 
+                    color={settings.themePrimaryColor || '#4F46E5'} 
+                />
 
                 <BranchFormModal visible={isFormVisible} onClose={() => setFormVisible(false)} onSubmit={handleFormSubmit} initialData={editingBranch} />
-                <ConfirmationModal visible={deleteModal.visible} title="Hapus Cabang?" message="Tindakan ini tidak dapat dibatalkan." confirmText="Hapus" isDanger={true} onConfirm={executeDelete} onCancel={() => setDeleteModal({ visible: false, branchId: '' })} />
+                <ConfirmationModal visible={deleteModal.visible} title="Hapus Cabang?" message="Tindakan ini akan menghapus semua karyawan dan kasir yang terikat. Yakin?" confirmText="Hapus" isDanger={true} onConfirm={executeDelete} onCancel={() => setDeleteModal({ visible: false, branchId: '' })} />
             </View>
         </MainLayout>
     );

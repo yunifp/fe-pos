@@ -13,11 +13,11 @@ import { CustomToast } from '../components/CustomToast';
 import FloatingActionButton from '../components/FloatingActionButton';
 import EmptyState from '../components/EmptyState';
 import CategoryCard from '../components/CategoryCard';
-import ScreenHeader from '../components/ScreenHeader'; // <--- Import ini
+import ScreenHeader from '../components/ScreenHeader';
 
 export default function CategoryListScreen() {
     const { settings } = useSettingStore();
-    const { categories, branches, fetchCategories, fetchInitialData, createCategory, updateCategory, deleteCategory, isLoading } = useCategoryStore();
+    const { categories, fetchCategories, createCategory, updateCategory, deleteCategory, isLoading } = useCategoryStore();
 
     const { width } = useWindowDimensions();
     const isDesktop = width >= 1024;
@@ -25,11 +25,7 @@ export default function CategoryListScreen() {
     const numColumns = isDesktop ? 3 : isTablet ? 2 : 1;
     const itemWidth = 100 / numColumns;
 
-    const [user, setUser] = useState<any>(null);
     const [userRole, setUserRole] = useState('');
-    const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
-    
-    // State Baru untuk Pencarian Kategori
     const [searchQuery, setSearchQuery] = useState('');
 
     const [isModalVisible, setModalVisible] = useState(false);
@@ -38,29 +34,17 @@ export default function CategoryListScreen() {
     const [deleteModal, setDeleteModal] = useState({ visible: false, categoryId: 0 });
 
     useEffect(() => {
-        fetchInitialData();
-        AsyncStorage.getItem('user').then(u => {
+        const init = async () => {
+            const u = await AsyncStorage.getItem('user');
             if (u) {
                 const parsedUser = JSON.parse(u);
-                setUser(parsedUser);
                 setUserRole(parsedUser.role);
-                if (parsedUser.role !== 'OWNER') fetchCategories();
             }
-        });
+            // Langsung fetch data global
+            fetchCategories();
+        };
+        init();
     }, []);
-
-    useEffect(() => {
-        if (user && userRole === 'OWNER' && branches.length > 0 && !selectedBranchId) {
-            const defaultId = user.branch.id;
-            setSelectedBranchId(defaultId);
-            fetchCategories(defaultId);
-        }
-    }, [user, userRole, branches]);
-
-    const handleBranchChange = (id: string) => {
-        setSelectedBranchId(id);
-        fetchCategories(id);
-    };
 
     const handleOpenAdd = () => { setEditingCategory(null); setModalVisible(true); };
     const handleOpenEdit = (cat: any) => { setEditingCategory(cat); setModalVisible(true); };
@@ -76,8 +60,6 @@ export default function CategoryListScreen() {
                 await createCategory(data);
                 showToast('Kategori ditambahkan', 'success');
             }
-            if (userRole === 'OWNER' && selectedBranchId) fetchCategories(selectedBranchId);
-            else fetchCategories();
         } catch (error) {
             showToast('Terjadi kesalahan', 'error');
         }
@@ -89,16 +71,14 @@ export default function CategoryListScreen() {
         try {
             await deleteCategory(id);
             showToast('Kategori dihapus', 'success');
-            if (userRole === 'OWNER' && selectedBranchId) fetchCategories(selectedBranchId);
-            else fetchCategories();
-        } catch (e) {
-            showToast('Gagal menghapus kategori', 'error');
+        } catch (e: any) {
+            showToast('Kategori gagal dihapus (kemungkinan masih dipakai di Produk)', 'error');
         }
     };
 
-    // Filter Kategori Berdasarkan Pencarian
-    const filteredCategories = categories.filter((c: any) => 
-        c.name.toLowerCase().includes(searchQuery.toLowerCase())
+    // Safely filter categories
+    const filteredCategories = (categories || []).filter((c: any) => 
+        c.name?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -106,7 +86,6 @@ export default function CategoryListScreen() {
             <View className="relative flex-1 bg-gray-50">
                 <CustomToast visible={toast.visible} message={toast.message} type={toast.type} onHide={() => setToast({ ...toast, visible: false })} />
 
-                {/* --- PENGGUNAAN SCREEN HEADER --- */}
                 <ScreenHeader 
                     title="Kategori"
                     subtitle={`${filteredCategories.length} Grup Terdaftar`}
@@ -115,21 +94,21 @@ export default function CategoryListScreen() {
                     onSearchChange={setSearchQuery}
                     searchPlaceholder="Cari kategori..."
                     userRole={userRole}
-                    branches={branches}
-                    selectedBranchId={selectedBranchId}
-                    onBranchChange={handleBranchChange}
-                    userBranchName={user?.branch?.name}
+                    branches={[]} // Kosong karena Kategori tidak dilimitasi per cabang
+                    selectedBranchId={null}
+                    onBranchChange={() => {}}
+                    userBranchName="Berlaku Global"
                 />
 
                 {isLoading ? (
                     <View className="items-center justify-center flex-1">
-                        <ActivityIndicator size="large" color={settings.themePrimaryColor} />
+                        <ActivityIndicator size="large" color={settings.themePrimaryColor || '#4F46E5'} />
                     </View>
                 ) : (
                     <FlatList
                         key={numColumns}
                         numColumns={numColumns}
-                        data={filteredCategories} // Gunakan filteredCategories
+                        data={filteredCategories}
                         renderItem={({ item }) => (
                             <CategoryCard item={item} itemWidth={itemWidth} onEdit={handleOpenEdit} onDelete={confirmDelete} />
                         )}
@@ -147,8 +126,22 @@ export default function CategoryListScreen() {
 
                 <FloatingActionButton onPress={handleOpenAdd} color={settings.themePrimaryColor || '#4F46E5'} />
 
-                <CategoryFormModal visible={isModalVisible} onClose={() => setModalVisible(false)} onSubmit={handleFormSubmit} initialData={editingCategory} branches={branches} userRole={userRole} />
-                <ConfirmationModal visible={deleteModal.visible} title="Hapus Kategori?" message="Yakin hapus? Produk dalam kategori ini akan menjadi 'Umum'." confirmText="Hapus" isDanger={true} onConfirm={executeDelete} onCancel={() => setDeleteModal({ visible: false, categoryId: 0 })} />
+                <CategoryFormModal 
+                    visible={isModalVisible} 
+                    onClose={() => setModalVisible(false)} 
+                    onSubmit={handleFormSubmit} 
+                    initialData={editingCategory} 
+                />
+                
+                <ConfirmationModal 
+                    visible={deleteModal.visible} 
+                    title="Hapus Kategori?" 
+                    message="Yakin hapus? Kategori ini tidak bisa dihapus jika ada produk yang menggunakannya." 
+                    confirmText="Hapus" 
+                    isDanger={true} 
+                    onConfirm={executeDelete} 
+                    onCancel={() => setDeleteModal({ visible: false, categoryId: 0 })} 
+                />
             </View>
         </MainLayout>
     );

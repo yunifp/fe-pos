@@ -6,7 +6,6 @@ import { useSettingStore } from '../stores/settingStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Package, Box } from 'lucide-react-native';
 
-// Import Reusable Components
 import MainLayout from '../components/MainLayout';
 import ProductDetailModal from '../components/ProductDetailModal';
 import ProductFormModal from '../components/ProductFormModal';
@@ -15,13 +14,12 @@ import { CustomToast } from '../components/CustomToast';
 import FloatingActionButton from '../components/FloatingActionButton';
 import EmptyState from '../components/EmptyState';
 import ProductCard from '../components/ProductCard';
-import ScreenHeader from '../components/ScreenHeader'; // <--- Import ScreenHeader
+import ScreenHeader from '../components/ScreenHeader';
 
 export default function ProductListScreen() {
     const { settings } = useSettingStore();
     const { width } = useWindowDimensions();
 
-    // Dinamis Grid System
     const isDesktop = width >= 1024;
     const isTablet = width >= 768 && width < 1024;
     const numColumns = isDesktop ? 3 : isTablet ? 2 : 1;
@@ -49,15 +47,17 @@ export default function ProductListScreen() {
                 const parsedUser = JSON.parse(u);
                 setUser(parsedUser);
                 setUserRole(parsedUser.role);
+                
+                // --- PERBAIKAN: Pemanggilan fetchCategories() kini tanpa parameter ---
+                fetchCategories(); 
+
                 if (parsedUser.role === 'OWNER') {
-                    fetchCategories();
                     const defaultBranch = parsedUser.branch?.id;
                     if (defaultBranch) {
                         setSelectedBranchId(defaultBranch);
                         fetchProducts(defaultBranch);
                     }
                 } else {
-                    fetchCategories(parsedUser.branchId);
                     fetchProducts(parsedUser.branchId);
                 }
             }
@@ -81,18 +81,51 @@ export default function ProductListScreen() {
     const handleOpenDetail = (product: any) => { setSelectedProduct(product); setDetailVisible(true); };
     const showToast = (msg: string, type: 'success' | 'error') => setToast({ visible: true, message: msg, type });
 
-    const handleFormSubmit = async (data: any) => {
+    const handleFormSubmit = async (payloadRaw: any) => {
         try {
-            if (data.id) {
-                await updateProduct(data.id, data);
+            const branchIdToUse = userRole === 'OWNER' ? selectedBranchId : user?.branchId;
+            
+            const payload: any = {
+                categoryId: payloadRaw.categoryId,
+                name: payloadRaw.name,
+                hasVariant: payloadRaw.hasVariant,
+            };
+            
+            if (branchIdToUse) payload.branchId = branchIdToUse;
+
+            if (payloadRaw.hasVariant) {
+                payload.variants = payloadRaw.variants;
+            } else {
+                payload.price = payloadRaw.price;
+                payload.trackStock = payloadRaw.trackStock;
+                payload.stock = payloadRaw.stock;
+                if (payloadRaw.recipes && payloadRaw.recipes.length > 0) {
+                    payload.recipes = payloadRaw.recipes;
+                }
+            }
+
+            if (payloadRaw.id) {
+                await updateProduct(payloadRaw.id, payload);
                 showToast('Produk diperbarui!', 'success');
             } else {
-                await createProduct(data);
+                await createProduct(payload);
                 showToast('Produk ditambahkan!', 'success');
             }
-            fetchProducts(userRole === 'OWNER' ? (selectedBranchId as string) : (user?.branchId as string));
-        } catch (error) {
-            showToast('Gagal memproses data.', 'error');
+            fetchProducts(branchIdToUse as string);
+        } catch (error: any) {
+            const errorData = error.response?.data;
+            let errorMsg = errorData?.message || 'Gagal menyimpan produk.';
+            
+            if (errorData?.errors && Array.isArray(errorData.errors)) {
+                errorMsg = errorData.errors.map((e: any) => e.message).join('\n');
+            } else if (errorData?.error?.issues && Array.isArray(errorData.error.issues)) {
+                errorMsg = errorData.error.issues.map((i: any) => i.message).join('\n');
+            } else if (errorData?.error) {
+                errorMsg += `\nDetail: ${errorData.error}`;
+            }
+            
+            console.error("Payload yang dikirim:", payloadRaw);
+            showToast(errorMsg, 'error');
         }
     };
 
@@ -109,8 +142,7 @@ export default function ProductListScreen() {
     };
 
     const filteredProducts = products.filter((p: any) =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.variants[0]?.sku && p.variants[0].sku.toLowerCase().includes(searchQuery.toLowerCase()))
+        p.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -118,14 +150,13 @@ export default function ProductListScreen() {
             <View className="relative flex-1 bg-slate-50">
                 <CustomToast visible={toast.visible} message={toast.message} type={toast.type} onHide={() => setToast({ ...toast, visible: false })} />
 
-                {/* --- PENGGUNAAN SCREEN HEADER --- */}
                 <ScreenHeader 
                     title="Katalog Produk"
                     subtitle={`${filteredProducts.length} Item`}
                     subtitleIcon={<Box size={10} color="#6366F1" />}
                     searchValue={searchQuery}
                     onSearchChange={setSearchQuery}
-                    searchPlaceholder="Cari produk atau SKU..."
+                    searchPlaceholder="Cari nama produk..."
                     userRole={userRole}
                     branches={branches}
                     selectedBranchId={selectedBranchId}
@@ -133,49 +164,29 @@ export default function ProductListScreen() {
                     userBranchName={user?.branch?.name}
                 />
 
-                {/* LIST AREA */}
                 {isLoading ? (
-                    <View className="items-center justify-center flex-1">
-                        <ActivityIndicator size="large" color="#4F46E5" />
-                    </View>
+                    <View className="items-center justify-center flex-1"><ActivityIndicator size="large" color="#4F46E5" /></View>
                 ) : (
                     <FlatList
                         data={filteredProducts}
                         renderItem={({ item }) => (
-                            <ProductCard 
-                                item={item} 
-                                onPress={handleOpenDetail} 
-                                itemWidth={itemWidth} 
-                                currencySymbol={settings.currencySymbol} 
-                            />
+                            <ProductCard item={item} onPress={handleOpenDetail} itemWidth={itemWidth} currencySymbol={settings.currencySymbol} />
                         )}
                         keyExtractor={(item) => item.id.toString()}
                         numColumns={numColumns}
                         key={numColumns}
                         contentContainerStyle={{ padding: 8, paddingBottom: 100, maxWidth: 1200, alignSelf: 'center', width: '100%' }}
                         showsVerticalScrollIndicator={false}
-                        ListEmptyComponent={
-                            <EmptyState 
-                                icon={<Package size={60} color="#94A3B8" />} 
-                                message={searchQuery ? 'Tidak ditemukan' : 'Katalog Kosong'} 
-                            />
-                        }
+                        ListEmptyComponent={<EmptyState icon={<Package size={60} color="#94A3B8" />} message={searchQuery ? 'Tidak ditemukan' : 'Katalog Kosong'} />}
                     />
                 )}
 
-                <FloatingActionButton 
-                    onPress={handleOpenAdd} 
-                    color={settings.themePrimaryColor || '#4F46E5'} 
-                />
+                <FloatingActionButton onPress={handleOpenAdd} color={settings.themePrimaryColor || '#4F46E5'} />
 
                 <ProductFormModal visible={isFormVisible} onClose={() => setFormVisible(false)} onSubmit={handleFormSubmit} initialData={selectedProduct} categories={categories} branches={branches} userRole={userRole} />
-                <ProductDetailModal
-                    visible={isDetailVisible}
-                    product={selectedProduct}
-                    onClose={() => setDetailVisible(false)}
-                    onEdit={() => { setDetailVisible(false); setTimeout(() => setFormVisible(true), 300); }}
-                    onDelete={(id: number) => { setDetailVisible(false); setDeleteModal({ visible: true, productId: id }); }}
-                />
+                
+                <ProductDetailModal visible={isDetailVisible} product={selectedProduct} onClose={() => setDetailVisible(false)} onEdit={() => { setDetailVisible(false); setTimeout(() => setFormVisible(true), 300); }} onDelete={(id: number) => { setDetailVisible(false); setDeleteModal({ visible: true, productId: id }); }} />
+
                 <ConfirmationModal visible={deleteModal.visible} title="Hapus Produk?" message="Data stok produk ini akan dihapus permanen." confirmText="Hapus" isDanger={true} onConfirm={executeDelete} onCancel={() => setDeleteModal({ visible: false, productId: 0 })} />
             </View>
         </MainLayout>

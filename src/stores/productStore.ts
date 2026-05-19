@@ -1,145 +1,96 @@
 import { create } from 'zustand';
 import api from '../api/api';
-import { Platform } from 'react-native';
 
-interface ProductState {
-    products: any[];
-    categories: any[];
-    branches: any[];
-    isLoading: boolean;
-
-    fetchInitialData: () => Promise<void>;
-    fetchProducts: (branchId?: string) => Promise<void>;
-    createProduct: (data: any) => Promise<void>;
-    updateProduct: (id: number, data: any) => Promise<void>;
-    deleteProduct: (id: number) => Promise<void>;
+export interface Recipe {
+  materialId: string;
+  quantityRequired: number;
 }
 
-export const useProductStore = create<ProductState>((set) => ({
-    products: [],
-    categories: [],
-    branches: [],
-    isLoading: false,
+export interface ProductVariant {
+  id?: number;
+  name: string;
+  price: number | string;
+  trackStock?: boolean;
+  stock?: number;
+  recipes: Recipe[];
+}
 
-    fetchInitialData: async () => {
-        try {
-            const [catRes, branchRes] = await Promise.all([
-                api.get('/categories'),
-                api.get('/branches')
-            ]);
-            set({ categories: catRes.data, branches: branchRes.data });
-        } catch (e) { console.error("Gagal load initial data", e); }
-    },
+export interface ProductPayload {
+  id?: number;
+  categoryId: number;
+  branchId?: string;
+  name: string;
+  hasVariant: boolean;
+  price?: number;
+  trackStock?: boolean;
+  stock?: number;
+  recipes?: Recipe[];
+  variants?: Omit<ProductVariant, 'id'>[];
+}
 
-    fetchProducts: async (branchId) => {
-        set({ isLoading: true });
-        try {
-            const params = branchId ? { branchId } : {};
-            const res = await api.get('/products', { params });
-            set({ products: res.data, isLoading: false });
-        } catch (error) {
-            set({ isLoading: false });
-        }
-    },
+interface ProductState {
+  products: any[];
+  isLoading: boolean;
+  error: string | null;
+  fetchProducts: (branchId?: string) => Promise<void>;
+  fetchInitialData: () => Promise<void>;
+  createProduct: (data: ProductPayload) => Promise<void>;
+  updateProduct: (id: number, data: any) => Promise<void>;
+  deleteProduct: (id: number) => Promise<void>;
+  branches: any[];
+}
 
-    // --- CREATE PRODUCT ---
-    createProduct: async (data) => {
-        const formData = new FormData();
+export const useProductStore = create<ProductState>((set, get) => ({
+  products: [],
+  branches: [],
+  isLoading: false,
+  error: null,
 
-        // Append Data Text
-        formData.append('name', data.name);
-        formData.append('description', data.description || '');
-        formData.append('categoryId', String(data.categoryId));
-        formData.append('hasVariants', String(data.hasVariants));
-        formData.append('openPrice', String(data.openPrice ?? false)); // <--- TAMBAHAN
+  fetchInitialData: async () => {
+    try {
+      const branchRes = await api.get('/branches');
+      set({ branches: branchRes.data.data });
+    } catch (e) { console.error("Error fetch initial product data", e); }
+  },
 
-        // [PERBAIKAN] Fallback value: Jika data.singlePrice kosong, ambil dari variants[0]
-        const v0 = data.variants && data.variants.length > 0 ? data.variants[0] : {};
-
-        formData.append('singlePrice', (data.singlePrice ?? v0.price ?? '0').toString());
-        formData.append('singleHpp', (data.singleHpp ?? v0.hpp ?? '0').toString());
-        formData.append('singleStock', (data.singleStock ?? v0.stock ?? '0').toString());
-        formData.append('singleSku', (data.singleSku || v0.sku || '').toString());
-        formData.append('singleManageStock', String(data.singleManageStock ?? v0.manageStock ?? true));
-
-        formData.append('variants', JSON.stringify(data.variants));
-
-        if (data.targetBranchIds) {
-            formData.append('targetBranchIds', JSON.stringify(data.targetBranchIds));
-        }
-
-        // [FIX GAMBAR]
-        if (data.image) {
-            if (Platform.OS === 'web') {
-                const res = await fetch(data.image);
-                const blob = await res.blob();
-                formData.append('image', blob, 'upload.jpg');
-            } else {
-                const localUri = data.image;
-                const filename = localUri.split('/').pop();
-                const match = /\.(\w+)$/.exec(filename);
-                const type = match ? `image/${match[1]}` : `image/jpeg`;
-
-                formData.append('image', {
-                    uri: localUri,
-                    name: filename || 'upload.jpg',
-                    type: type,
-                } as any);
-            }
-        }
-
-        await api.post('/products', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            transformRequest: (data) => data,
-        });
-    },
-
-    // --- UPDATE PRODUCT ---
-    updateProduct: async (id, data) => {
-        const formData = new FormData();
-
-        formData.append('name', data.name);
-        formData.append('description', data.description || '');
-        formData.append('categoryId', String(data.categoryId));
-        formData.append('hasVariants', String(data.hasVariants));
-        formData.append('openPrice', String(data.openPrice ?? false)); // <--- TAMBAHAN
-        formData.append('variants', JSON.stringify(data.variants));
-
-        // [FIX] HANYA kirim field 'image' jika ini adalah URI lokal (baru dipilih)
-        const isNewImage = data.image && (
-            data.image.startsWith('blob:') ||
-            data.image.startsWith('file:') ||
-            data.image.startsWith('content:')
-        );
-
-        if (isNewImage) {
-            if (Platform.OS === 'web') {
-                const res = await fetch(data.image);
-                const blob = await res.blob();
-                formData.append('image', blob, 'update_image.jpg');
-            } else {
-                const localUri = data.image;
-                const filename = localUri.split('/').pop();
-                const match = /\.(\w+)$/.exec(filename || '');
-                const type = match ? `image/${match[1]}` : `image/jpeg`;
-
-                formData.append('image', {
-                    uri: localUri,
-                    name: filename || 'update_image.jpg',
-                    type: type,
-                } as any);
-            }
-        }
-
-        await api.put(`/products/${id}`, formData, {
-            headers: {
-                'Content-Type': 'multipart/form-data',
-            },
-        });
-    },
-
-    deleteProduct: async (id) => {
-        await api.delete(`/products/${id}`);
-        set(state => ({ products: state.products.filter(p => p.id !== id) }));
+  fetchProducts: async (branchId?: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      const url = branchId ? `/products?branchId=${branchId}` : '/products';
+      const response = await api.get(url);
+      set({ products: response.data.data, isLoading: false });
+    } catch (error: any) {
+      set({ error: error.response?.data?.message || 'Gagal mengambil data produk', isLoading: false });
     }
+  },
+
+  createProduct: async (data) => {
+    set({ isLoading: true, error: null });
+    try {
+      await api.post('/products', data);
+    } catch (error: any) {
+      set({ error: error.response?.data?.message || 'Gagal menambah produk', isLoading: false });
+      throw error;
+    }
+  },
+
+  updateProduct: async (id, data) => {
+    set({ isLoading: true, error: null });
+    try {
+      await api.put(`/products/${id}`, data);
+    } catch (error: any) {
+      set({ error: error.response?.data?.message || 'Gagal update produk', isLoading: false });
+      throw error;
+    }
+  },
+
+  deleteProduct: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      await api.delete(`/products/${id}`);
+    } catch (error: any) {
+      set({ error: error.response?.data?.message || 'Gagal menghapus produk', isLoading: false });
+      throw error;
+    }
+  },
 }));

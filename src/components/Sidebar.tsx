@@ -1,11 +1,11 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, Image, ScrollView, Linking, Platform, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Image, ScrollView, Linking, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
     LayoutDashboard, ShoppingCart, Package, Users, Settings,
     LogOut, ChevronLeft, ChevronRight, Store, X,
     Tag, Clock, ClipboardList, BarChart3,
-    Printer, HistoryIcon, LoaderCircleIcon, Download, QrCode, UserCircle
+    Printer, HistoryIcon, LoaderCircleIcon, Download, QrCode, UserCircle, Archive, Box, Navigation // <-- TAMBAHAN ICON NAVIGATION
 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSettingStore } from '../stores/settingStore';
@@ -28,29 +28,26 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
     const [isDownloading, setIsDownloading] = useState(false);
     const [hasNewUpdate, setHasNewUpdate] = useState(false);
 
-    // --- REFS PERBAIKAN ---
     const scrollRef = useRef<ScrollView>(null);
     const itemPositions = useRef<{ [key: string]: number }>({});
-    const groupOffsets = useRef<{ [key: number]: number }>({}); // Mencatat posisi tiap grup
+    const groupOffsets = useRef<{ [key: number]: number }>({}); 
 
     const primaryColor = settings.themePrimaryColor || '#1e293b';
     const secondaryColor = settings.themeSecondaryColor || '#6366f1';
 
-    // --- FUNGSI SCROLL (DENGAN PENANGANAN TIMING) ---
     const executeScroll = () => {
         const activeRoute = route.name;
         const yPos = itemPositions.current[activeRoute];
 
         if (yPos !== undefined && scrollRef.current) {
             scrollRef.current.scrollTo({
-                y: yPos - 80, // Offset agar tidak terlalu mepet ke atas
+                y: yPos - 80,
                 animated: true,
             });
         }
     };
 
     useEffect(() => {
-        // Coba scroll segera setelah rute berubah
         const timer = setTimeout(executeScroll, 300);
         return () => clearTimeout(timer);
     }, [route.name]);
@@ -61,12 +58,7 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
                 const response = await api.get('/download/latest-apk');
                 if (response.data.success && response.data.createdAt) {
                     const latestUpdateServer = response.data.createdAt;
-
-                    // Ambil info kapan terakhir kali user melakukan update dari memori HP
                     const lastSeenUpdate = await AsyncStorage.getItem('LAST_SEEN_UPDATE_TIME');
-
-                    // Jika timestamp dari server TIDAK SAMA dengan yang terakhir dilihat/download
-                    // Berarti benar-benar ada file baru
                     if (latestUpdateServer !== lastSeenUpdate) {
                         setHasNewUpdate(true);
                     } else {
@@ -106,13 +98,8 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
         try {
             const response = await api.get('/download/latest-apk');
             if (response.data.success && response.data.url) {
-
-                // 1. Simpan timestamp file ini ke AsyncStorage sebagai versi "terakhir didownload"
                 await AsyncStorage.setItem('LAST_SEEN_UPDATE_TIME', response.data.createdAt);
-
-                // 2. Matikan badge update
                 setHasNewUpdate(false);
-
                 await Linking.openURL(response.data.url);
             } else {
                 Alert.alert("Gagal", "Link download tidak ditemukan.");
@@ -138,9 +125,11 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
         {
             title: 'CRM & Keuangan',
             items: [
-                { name: 'Produk', icon: Package, route: 'Products', roles: ['OWNER', 'MANAGER'] },
+                { name: 'Bahan Baku', icon: Archive, route: 'Materials', roles: ['OWNER', 'MANAGER'] },
+                { name: 'Gudang & Logistik', icon: Box, route: 'Inventory', roles: ['OWNER', 'MANAGER'] },
+                { name: 'Distribusi Barang', icon: Navigation, route: 'Distributions', roles: ['OWNER', 'MANAGER', 'CASHIER'] }, // <-- TAMBAHAN FASE 4
+                { name: 'Produk Jualan', icon: Package, route: 'Products', roles: ['OWNER', 'MANAGER'] },
                 { name: 'Kategori', icon: Tag, route: 'Categories', roles: ['OWNER', 'MANAGER'] },
-                { name: 'Stok Produk', icon: ClipboardList, route: 'Inventory', roles: ['OWNER', 'MANAGER'] },
                 { name: 'Promo & Diskon', icon: ShoppingCart, route: 'Promotions', roles: ['OWNER', 'MANAGER'] },
                 { name: 'Member', icon: Users, route: 'Members', roles: ['CASHIER', 'OWNER', 'MANAGER'] },
                 { name: 'Arus Kas', icon: BarChart3, route: 'CashFlow', roles: ['OWNER', 'MANAGER'] },
@@ -174,7 +163,6 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
         }
     ], []);
 
-    // PERBAIKAN: Gunakan .toUpperCase() pada userRole agar match dengan array `roles` yang memakai huruf besar semua.
     const filteredGroups = menuGroups.map(group => ({
         ...group,
         items: group.items.filter(item => !userRole || item.roles.includes(userRole.toUpperCase()))
@@ -184,7 +172,6 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
 
     return (
         <View className="flex-col h-full border-r border-slate-800" style={{ width: widthStyle, backgroundColor: primaryColor }}>
-            {/* --- HEADER --- */}
             <View className="flex-row items-center justify-between h-[70px] px-4 border-b border-slate-800 bg-slate-900">
                 <View className="flex-row items-center flex-1 overflow-hidden">
                     <View className="items-center justify-center border rounded-lg w-9 h-9 bg-slate-800 border-slate-700">
@@ -204,7 +191,6 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
                 )}
             </View>
 
-            {/* --- SCROLLABLE MENU --- */}
             <ScrollView
                 ref={scrollRef}
                 className="flex-1"
@@ -212,12 +198,7 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
                 contentContainerStyle={{ paddingVertical: 16, paddingBottom: 20 }}
             >
                 {filteredGroups.map((group, groupIndex) => (
-                    <View
-                        key={groupIndex}
-                        className="mb-5"
-                        // MENCATAT POSISI GRUP
-                        onLayout={(e) => groupOffsets.current[groupIndex] = e.nativeEvent.layout.y}
-                    >
+                    <View key={groupIndex} className="mb-5" onLayout={(e) => groupOffsets.current[groupIndex] = e.nativeEvent.layout.y}>
                         {(!isCollapsed || isMobile) && (
                             <Text className="px-5 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                                 {group.title}
@@ -230,7 +211,6 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
                             return (
                                 <TouchableOpacity
                                     key={itemIndex}
-                                    // PERBAIKAN: Hitung posisi relatif item + posisi grup
                                     onLayout={(e) => {
                                         const itemY = e.nativeEvent.layout.y;
                                         const groupY = groupOffsets.current[groupIndex] || 0;
@@ -253,22 +233,8 @@ const Sidebar: React.FC<Props> = ({ isCollapsed, toggleCollapse, userRole, isMob
                         })}
                     </View>
                 ))}
-
-                <View className="px-2 mt-2 mb-4">
-                    <TouchableOpacity onPress={handleDownloadAPK} className={`flex-row items-center rounded-lg border border-emerald-900/50 bg-emerald-900/20 relative ${isCollapsed && !isMobile ? 'justify-center p-2' : 'px-3 py-3'}`}>
-                        {hasNewUpdate && <View className="absolute -top-2 -right-1 bg-rose-500 px-1.5 py-0.5 rounded-md shadow-sm border border-rose-600" style={{ zIndex: 10 }}><Text className="text-[8px] font-black text-white uppercase tracking-tighter">Update!</Text></View>}
-                        <Download size={18} color="#10B981" />
-                        {(!isCollapsed || isMobile) && (
-                            <View className="flex-row items-center flex-1 ml-3">
-                                <Text className="text-xs font-bold text-emerald-500">Update APK</Text>
-                                {hasNewUpdate && <View className="w-1.5 h-1.5 rounded-full bg-rose-500 ml-2 animate-pulse" />}
-                            </View>
-                        )}
-                    </TouchableOpacity>
-                </View>
             </ScrollView>
 
-            {/* --- FOOTER --- */}
             <View className="px-3 py-3 border-t border-slate-800 bg-slate-900">
                 {!isMobile && (
                     <TouchableOpacity onPress={toggleCollapse} className="items-center justify-center w-full py-2 mb-2 border rounded-lg bg-slate-800 border-slate-700">

@@ -25,12 +25,10 @@ export default function POSScreen() {
     const { settings, fetchSettings } = useSettingStore();
     const { width, height } = useWindowDimensions();
 
-    // Breakpoints yang lebih agresif untuk responsivitas tinggi
     const isLarge = width >= 1024;
     const isMedium = width >= 768;
     const isSmall = width < 768;
 
-    // Perhitungan kolom produk dinamis
     const getColumnCount = () => {
         const availableWidth = !isLarge && pos.isCartVisible ? 0 : width;
         if (isLarge) return 3;
@@ -42,6 +40,7 @@ export default function POSScreen() {
     const { products, fetchProducts } = useProductStore();
     const { categories, fetchCategories } = useCategoryStore();
 
+    const [user, setUser] = useState<any>(null); // State untuk menyimpan info user/branch
     const [search, setSearch] = useState('');
     const [selectedCat, setSelectedCat] = useState<number | null>(null);
     const [showPayment, setShowPayment] = useState(false);
@@ -54,30 +53,26 @@ export default function POSScreen() {
     const [customerName, setCustomerName] = useState('');
     const [ticketSearch, setTicketSearch] = useState('');
 
-    // --- STATE BARU UNTUK NOTES ---
     const [showNoteModal, setShowNoteModal] = useState(false);
     const [currentNote, setCurrentNote] = useState('');
     const [activeVariantIdForNote, setActiveVariantIdForNote] = useState<number | null>(null);
 
-    // --- STATE BARU UNTUK OPEN PRICE ---
     const [showOpenPriceModal, setShowOpenPriceModal] = useState(false);
     const [manualPrice, setManualPrice] = useState('');
     const [pendingItem, setPendingItem] = useState<{ product: any, variant: any } | null>(null);
 
     useEffect(() => {
-        if (isMedium) {
-            pos.setCartVisible(true);
-        } else {
-            pos.setCartVisible(false);
-        }
+        if (isMedium) pos.setCartVisible(true);
+        else pos.setCartVisible(false);
     }, [isMedium]);
 
     useEffect(() => {
         const init = async () => {
             const userData = await AsyncStorage.getItem('user');
             if (userData) {
-                const user = JSON.parse(userData);
-                const branchId = user.branch.id;
+                const parsedUser = JSON.parse(userData);
+                setUser(parsedUser);
+                const branchId = parsedUser.branch?.id || parsedUser.branchId;
                 fetchProducts(branchId);
                 fetchCategories(branchId);
                 pos.fetchAvailablePromos(branchId);
@@ -112,38 +107,28 @@ export default function POSScreen() {
         }
     };
 
-    // --- LOGIKA BUKA MODAL NOTE ---
     const handleOpenNote = (item: any) => {
         setActiveVariantIdForNote(item.variantId);
         setCurrentNote(item.notes || '');
         setShowNoteModal(true);
     };
 
-    // --- LOGIKA SIMPAN NOTE KE STORE ---
     const handleSaveNote = () => {
-        if (activeVariantIdForNote) {
-            pos.updateItemNotes(activeVariantIdForNote, currentNote);
-        }
+        if (activeVariantIdForNote) pos.updateItemNotes(activeVariantIdForNote, currentNote);
         setShowNoteModal(false);
         setCurrentNote('');
         setActiveVariantIdForNote(null);
     };
 
-    // --- LOGIKA KALKULATOR OPEN PRICE ---
-    const handlePressCalc = (num: string) => {
-        setManualPrice(prev => prev + num);
-    };
-
+    const handlePressCalc = (num: string) => setManualPrice(prev => prev + num);
     const handleClearCalc = () => setManualPrice('');
     const handleBackspaceCalc = () => setManualPrice(prev => prev.slice(0, -1));
 
     const handleConfirmOpenPrice = () => {
         const price = Number(manualPrice);
-        if (!manualPrice || price <= 0) {
-            return Alert.alert("Harga Wajib Diisi", "Mohon masukkan nominal harga yang valid.");
-        }
+        if (!manualPrice || price <= 0) return Alert.alert("Harga Wajib Diisi", "Mohon masukkan nominal harga yang valid.");
+        
         if (pendingItem) {
-            // Kita buat clone variant dengan harga yang diinput manual
             const variantWithManualPrice = { ...pendingItem.variant, price: price };
             pos.addToCart(pendingItem.product, variantWithManualPrice);
         }
@@ -152,36 +137,34 @@ export default function POSScreen() {
         setPendingItem(null);
     };
 
+    // --- FASE 1 & 2: PERBAIKAN LOGIKA SIMPAN TIKET (OPEN BILL) ---
     const handleSaveTicket = async () => {
         if (!customerName && !pos.currentOrder?.customerName) return alert("Mohon isi Nama Pelanggan");
         try {
+            const branchIdToUse = user?.branch?.id || user?.branchId;
+            
+            // Payload disesuaikan strictly dengan createOrderSchema di pos.controller.ts
             const payload = {
-                id: pos.currentOrder?.id || null,
+                branchId: branchIdToUse,
+                orderType: orderType,
+                customerName: customerName || pos.currentOrder?.customerName || "Walk-in",
+                paymentStatus: 'UNPAID', // Ini kunci bahwa ini adalah Open Bill
                 items: pos.cart.map((item: any) => ({
                     variantId: item.variantId,
                     quantity: item.quantity,
-                    price: item.price,
-                    hpp: item.hpp,
-                    originalPrice: item.originalPrice || item.price,
-                    subtotal: item.subtotal,
-                    discount: (Number(item.originalPrice || item.price) - Number(item.price)) * item.quantity,
-                    notes: item.notes || ""
                 })),
-                customerName: customerName || pos.currentOrder?.customerName,
-                subtotal: totals.subtotal,
-                totalAmount: totals.total,
-                status: 'PENDING',
-                paymentStatus: 'UNPAID',
-                orderType,
-                memberId: pos.selectedMember?.id || null
             };
-            await api.post('/orders/pos', payload);
-            alert("Tiket Berhasil Disimpan!");
+
+            // Jika sedang update order yang sudah ada, harusnya PATCH (bisa disesuaikan nanti, smentara kita fokus CREATE sesuai backend yg ada)
+            // Endpoint diubah ke /pos/orders
+            await api.post('/pos/orders', payload);
+            
+            alert("Tiket Berhasil Disimpan & Dikirim ke Dapur!");
             pos.resetPOS();
             setShowSaveModal(false);
             setCustomerName('');
         } catch (e: any) {
-            alert("Gagal Simpan: " + (e.response?.data?.message || "Error"));
+            alert("Gagal Simpan: " + (e.response?.data?.message || "Error Server"));
         }
     };
 
@@ -215,7 +198,11 @@ export default function POSScreen() {
 
                         <View className="flex-row gap-2">
                             <TouchableOpacity
-                                onPress={async () => { await pos.fetchOpenTickets(); setShowOpenTicketList(true); }}
+                                onPress={async () => { 
+                                    const branchIdToUse = user?.branch?.id || user?.branchId;
+                                    await pos.fetchOpenTickets(branchIdToUse); 
+                                    setShowOpenTicketList(true); 
+                                }}
                                 className="flex-row items-center justify-center px-4 py-3 bg-white border shadow-sm rounded-2xl border-slate-100"
                             >
                                 <Clock size={18} color={settings.themeSecondaryColor} />
@@ -370,8 +357,8 @@ export default function POSScreen() {
                                     <Text className="text-xl font-black text-indigo-600">Rp {totals.total.toLocaleString()}</Text>
                                 </View>
                                 <View className="flex-row gap-2">
-                                    <TouchableOpacity onPress={() => setShowSaveModal(true)} className="items-center justify-center p-3 border bg-slate-50 rounded-2xl border-slate-200">
-                                        <Ticket size={20} color="#64748B" />
+                                    <TouchableOpacity onPress={() => setShowSaveModal(true)} disabled={pos.cart.length === 0} className={`items-center justify-center p-3 border rounded-2xl ${pos.cart.length === 0 ? 'bg-slate-100 border-slate-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                                        <Ticket size={20} color={pos.cart.length === 0 ? '#CBD5E1' : '#64748B'} />
                                     </TouchableOpacity>
                                     <TouchableOpacity onPress={() => setShowPayment(true)} disabled={pos.cart.length === 0} className={`flex-1 py-4 rounded-2xl items-center ${pos.cart.length === 0 ? 'bg-slate-200' : 'bg-indigo-600 shadow-lg'}`}>
                                         <Text className="text-lg font-black text-white uppercase">BAYAR</Text>
@@ -423,12 +410,7 @@ export default function POSScreen() {
             {/* --- MODAL OPEN PRICE (KALKULATOR COMPACT) --- */}
             <Modal visible={showOpenPriceModal} transparent animationType="fade">
                 <View className="items-center justify-center flex-1 p-4 bg-black/60">
-                    {/* Container Utama: Menggunakan max-height agar tidak penuh dan max-width agar proporsional */}
-                    <View
-                        style={{ maxHeight: height * 0.85 }}
-                        className="bg-white w-full max-w-[340px] rounded-[40px] p-5 shadow-2xl overflow-hidden"
-                    >
-                        {/* Header Area */}
+                    <View style={{ maxHeight: height * 0.85 }} className="bg-white w-full max-w-[340px] rounded-[40px] p-5 shadow-2xl overflow-hidden">
                         <View className="items-center mb-3">
                             <View className="p-2.5 mb-2 bg-indigo-50 rounded-2xl">
                                 <Calculator size={24} color="#4F46E5" />
@@ -439,23 +421,16 @@ export default function POSScreen() {
                             </Text>
                         </View>
 
-                        {/* Display Harga & Tombol Clear (C) */}
                         <View className="flex-row items-center w-full h-16 px-4 mb-4 border bg-slate-50 rounded-3xl border-slate-100">
                             <Text className="flex-1 text-2xl font-black text-indigo-600">
                                 Rp {Number(manualPrice || 0).toLocaleString('id-ID')}
                             </Text>
-                            {/* Tombol Clear diletakkan di samping harga agar grid bawah lebih rapi */}
-                            <TouchableOpacity
-                                onPress={handleClearCalc}
-                                className="p-2 bg-rose-100 rounded-xl active:bg-rose-200"
-                            >
+                            <TouchableOpacity onPress={handleClearCalc} className="p-2 bg-rose-100 rounded-xl active:bg-rose-200">
                                 <Text className="text-xs font-black text-rose-600">C</Text>
                             </TouchableOpacity>
                         </View>
 
-                        {/* Calculator Grid */}
                         <View className="w-full">
-                            {/* Baris 1 & 2 (Isi 4 Angka per Baris) */}
                             <View className="flex-row flex-wrap justify-between">
                                 {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
                                     <TouchableOpacity
@@ -467,43 +442,24 @@ export default function POSScreen() {
                                     </TouchableOpacity>
                                 ))}
                             </View>
-
-                            {/* Baris Terakhir (Isi 3 Angka/Fungsi) */}
                             <View className="flex-row justify-between">
-                                <TouchableOpacity
-                                    onPress={() => handlePressCalc('9')}
-                                    className="w-[31%] h-12 items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm active:bg-slate-50"
-                                >
+                                <TouchableOpacity onPress={() => handlePressCalc('9')} className="w-[31%] h-12 items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm active:bg-slate-50">
                                     <Text className="text-lg font-black text-slate-800">9</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity
-                                    onPress={() => handlePressCalc('0')}
-                                    className="w-[31%] h-12 items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm active:bg-slate-50"
-                                >
+                                <TouchableOpacity onPress={() => handlePressCalc('0')} className="w-[31%] h-12 items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm active:bg-slate-50">
                                     <Text className="text-lg font-black text-slate-800">0</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity
-                                    onPress={handleBackspaceCalc}
-                                    className="w-[31%] h-12 items-center justify-center rounded-2xl bg-slate-100 active:bg-slate-200"
-                                >
+                                <TouchableOpacity onPress={handleBackspaceCalc} className="w-[31%] h-12 items-center justify-center rounded-2xl bg-slate-100 active:bg-slate-200">
                                     <Delete size={20} color="#64748B" />
                                 </TouchableOpacity>
                             </View>
                         </View>
 
-                        {/* Action Buttons */}
                         <View className="mt-6">
-                            <TouchableOpacity
-                                onPress={handleConfirmOpenPrice}
-                                className="items-center w-full py-4 bg-indigo-600 shadow-lg rounded-2xl shadow-indigo-200 active:scale-95"
-                            >
+                            <TouchableOpacity onPress={handleConfirmOpenPrice} className="items-center w-full py-4 bg-indigo-600 shadow-lg rounded-2xl shadow-indigo-200 active:scale-95">
                                 <Text className="text-sm font-black tracking-widest text-white uppercase">TAMBAHKAN</Text>
                             </TouchableOpacity>
-
-                            <TouchableOpacity
-                                onPress={() => { setShowOpenPriceModal(false); setPendingItem(null); }}
-                                className="items-center py-3 mt-1"
-                            >
+                            <TouchableOpacity onPress={() => { setShowOpenPriceModal(false); setPendingItem(null); }} className="items-center py-3 mt-1">
                                 <Text className="text-[10px] font-bold uppercase text-slate-400">Batalkan</Text>
                             </TouchableOpacity>
                         </View>
@@ -576,7 +532,6 @@ export default function POSScreen() {
                                 (t.invoiceNumber?.toLowerCase() || '').includes(ticketSearch.toLowerCase())
                             ).map((t: any) => (
                                 <View key={t.id} className="flex-row items-center p-5 mb-4 border border-slate-100 rounded-[35px] shadow-sm bg-white">
-                                    {/* AREA KLIK UNTUK LOAD TICKET */}
                                     <TouchableOpacity
                                         onPress={() => { pos.loadTicket(t); setShowOpenTicketList(false); setTicketSearch(''); }}
                                         className="flex-row items-center flex-1"
@@ -590,54 +545,45 @@ export default function POSScreen() {
                                         </View>
                                     </TouchableOpacity>
 
-                                    {/* INFO HARGA & JUMLAH ITEM */}
                                     <View className="items-end px-4">
                                         <Text className="text-lg font-black text-indigo-600">Rp {Number(t.totalAmount).toLocaleString('id-ID')}</Text>
                                         <Text className="text-[10px] font-black text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded-md mt-1">{t.items.length} Items</Text>
                                     </View>
 
-                                    {/* TOMBOL HAPUS TIKET */}
+                                    {/* FASE 1: PERBAIKAN LOGIKA DELETE MENJADI PATCH STATUS CANCELED */}
                                     <TouchableOpacity
                                         onPress={() => {
-                                            const title = "Hapus Tiket";
-                                            const message = "Apakah Anda yakin ingin menghapus tiket ini secara permanen?";
+                                            const title = "Batalkan Tiket";
+                                            const message = "Apakah Anda yakin ingin membatalkan tiket ini secara permanen?";
+                                            const branchIdToUse = user?.branch?.id || user?.branchId;
 
-                                            // --- LOGIKA UNTUK WEB ---
                                             if (Platform.OS === 'web') {
                                                 const confirmed = window.confirm(`${title}\n\n${message}`);
                                                 if (confirmed) {
-                                                    // Jalankan fungsi hapus langsung jika dikonfirmasi di web
                                                     (async () => {
                                                         try {
-                                                            await api.delete(`/orders/${t.id}`);
-                                                            await pos.fetchOpenTickets();
+                                                            await api.patch(`/pos/orders/${t.id}/status`, { status: 'CANCELED' });
+                                                            await pos.fetchOpenTickets(branchIdToUse);
                                                         } catch (e) {
-                                                            alert("Gagal menghapus tiket yang sudah dibayar atau terjadi kesalahan server.");
+                                                            alert("Gagal membatalkan tiket yang sudah diproses atau terjadi kesalahan server.");
                                                         }
                                                     })();
                                                 }
-                                            }
-                                            // --- LOGIKA UNTUK ANDROID/IOS ---
-                                            else {
-                                                Alert.alert(
-                                                    title,
-                                                    message,
-                                                    [
-                                                        { text: "Batal", style: "cancel" },
-                                                        {
-                                                            text: "Hapus",
-                                                            style: "destructive",
-                                                            onPress: async () => {
-                                                                try {
-                                                                    await api.delete(`/orders/${t.id}`);
-                                                                    await pos.fetchOpenTickets();
-                                                                } catch (e) {
-                                                                    Alert.alert("Gagal", "Tidak dapat menghapus tiket yang sudah dibayar atau terjadi kesalahan server.");
-                                                                }
+                                            } else {
+                                                Alert.alert(title, message, [
+                                                    { text: "Batal", style: "cancel" },
+                                                    {
+                                                        text: "Batalkan", style: "destructive",
+                                                        onPress: async () => {
+                                                            try {
+                                                                await api.patch(`/pos/orders/${t.id}/status`, { status: 'CANCELED' });
+                                                                await pos.fetchOpenTickets(branchIdToUse);
+                                                            } catch (e) {
+                                                                Alert.alert("Gagal", "Tidak dapat membatalkan tiket yang sudah diproses.");
                                                             }
                                                         }
-                                                    ]
-                                                );
+                                                    }
+                                                ]);
                                             }
                                         }}
                                         className="p-3 bg-rose-50 rounded-2xl"
