@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { View, FlatList, ActivityIndicator, useWindowDimensions, TouchableOpacity, Text, ScrollView } from 'react-native';
+import { View, FlatList, ActivityIndicator, useWindowDimensions, TouchableOpacity, Text } from 'react-native';
 import { Box, Archive, PackagePlus, ArrowRight } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useWarehouseStore } from '../stores/warehouseStore';
 import { useMaterialStore } from '../stores/materialStore';
 import { useSettingStore } from '../stores/settingStore';
-import { useBranchStore } from '../stores/branchStore'; // IMPORT GLOBAL BRANCH STORE
+import { useBranchStore } from '../stores/branchStore'; 
 
 import MainLayout from '../components/MainLayout';
 import ScreenHeader from '../components/ScreenHeader';
@@ -25,15 +25,18 @@ export default function InventoryScreen() {
 
     const isDesktop = width >= 1024;
     const isTablet = width >= 768 && width < 1024;
-
-    const numColumns = isDesktop ? 2 : isTablet ? 1 : 1;
+    
+    const numColumns = isDesktop ? 2 : isTablet ? 1 : 1; 
     const itemWidth = 100 / numColumns;
 
     const { warehouses, fetchWarehouses, createWarehouse, updateWarehouse, deleteWarehouse, addStock, isLoading } = useWarehouseStore();
-    const { materials, fetchMaterials } = useMaterialStore();
+    const { materials, fetchMaterials } = useMaterialStore(); 
     
     // --- STATE CABANG GLOBAL ---
     const { branches, fetchBranches, selectedBranchId, setSelectedBranchId } = useBranchStore();
+
+    // --- STATE TAB SWITCHER ---
+    const [activeTab, setActiveTab] = useState<'WAREHOUSE' | 'RESTOCK'>('WAREHOUSE');
 
     const [isFormVisible, setFormVisible] = useState(false);
     const [isDetailVisible, setDetailVisible] = useState(false);
@@ -41,7 +44,7 @@ export default function InventoryScreen() {
 
     const [selectedWarehouse, setSelectedWarehouse] = useState<any>(null);
     const [activeWarehouseId, setActiveWarehouseId] = useState<string | null>(null);
-
+    
     const [toast, setToast] = useState({ visible: false, message: '', type: 'success' as 'success' | 'error' });
     const [deleteModal, setDeleteModal] = useState({ visible: false, warehouseId: '' });
     const [searchQuery, setSearchQuery] = useState('');
@@ -68,10 +71,9 @@ export default function InventoryScreen() {
 
     const handleOpenAdd = () => { setSelectedWarehouse(null); setFormVisible(true); };
     const handleOpenDetail = (warehouse: any) => { setActiveWarehouseId(warehouse.id); setDetailVisible(true); };
-
-    const handleOpenRestock = (warehouseId?: string) => {
-        setActiveWarehouseId(warehouseId || null);
-        setRestockVisible(true);
+    const handleOpenRestock = (warehouseId?: string) => { 
+        setActiveWarehouseId(warehouseId || null); 
+        setRestockVisible(true); 
     };
 
     const handleFormSubmit = async (data: any) => {
@@ -83,6 +85,7 @@ export default function InventoryScreen() {
                 await createWarehouse(data);
                 showToast('Gudang ditambahkan!', 'success');
             }
+            fetchWarehouses();
         } catch (error) {
             showToast('Gagal memproses data.', 'error');
         }
@@ -94,6 +97,7 @@ export default function InventoryScreen() {
         try {
             await deleteWarehouse(id);
             showToast('Gudang dihapus', 'success');
+            fetchWarehouses();
         } catch (e) {
             showToast('Gagal menghapus gudang.', 'error');
         }
@@ -103,37 +107,41 @@ export default function InventoryScreen() {
         try {
             await addStock(warehouseId, data);
             showToast('Stok berhasil ditambahkan ke Gudang!', 'success');
-            fetchWarehouses();
+            fetchWarehouses(); 
         } catch (e) {
             showToast('Gagal menambah stok.', 'error');
         }
     };
 
     const filteredWarehouses = warehouses.filter((w: any) => w.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    const filteredMaterials = materials.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    // Fungsi untuk mendapatkan nama cabang terpilih
     const getActiveBranchName = () => {
         if (!selectedBranchId) return 'Cabang';
         const br = branches.find(b => b.id === selectedBranchId);
         return br ? br.name : 'Cabang';
     };
 
+    const primaryColor = settings.themePrimaryColor || '#4F46E5';
+
     const renderWarehouseCard = ({ item }: { item: any }) => (
         <View style={{ width: `${itemWidth}%`, padding: 6 }}>
-            <TouchableOpacity onPress={() => handleOpenDetail(item)} className="flex-row items-center p-4 bg-white border shadow-sm rounded-2xl border-slate-100">
+            <TouchableOpacity onPress={() => handleOpenDetail(item)} className="flex-row items-center p-4 bg-white border shadow-sm rounded-3xl border-slate-100">
                 <View className="items-center justify-center mr-4 border w-12 h-12 rounded-xl bg-indigo-50 border-indigo-100">
-                    <Box color="#4F46E5" size={24} />
+                    <Archive color={primaryColor} size={20} />
                 </View>
                 <View className="justify-center flex-1 pr-1">
-                    <Text className="text-sm font-black text-slate-800 leading-tight mb-0.5" numberOfLines={1}>{item.name}</Text>
-                    <Text className="text-[10px] font-bold text-slate-400 mb-1" numberOfLines={1}>{item.address || '-'}</Text>
-                    <View className="bg-slate-100 px-2 py-0.5 rounded-md self-start mt-1">
+                    <Text className="text-[13px] font-black text-slate-800 leading-tight mb-1" numberOfLines={1}>{item.name}</Text>
+                    <Text className="text-[9px] font-bold text-slate-400 mb-1.5" numberOfLines={1}>{item.address || 'Alamat tidak diatur'}</Text>
+                    <View className="bg-slate-50 px-2 py-1 rounded-md self-start border border-slate-100">
                         <Text className="text-[9px] font-black text-slate-600 uppercase tracking-widest">
                             {item._count?.stocks || 0} Material
                         </Text>
                     </View>
                 </View>
-                <ArrowRight size={16} color="#CBD5E1" />
+                <View className="items-center justify-center w-8 h-8 rounded-full bg-slate-50">
+                    <ArrowRight size={14} color="#CBD5E1" />
+                </View>
             </TouchableOpacity>
         </View>
     );
@@ -143,79 +151,123 @@ export default function InventoryScreen() {
             <View className="relative flex-1 bg-slate-50">
                 <CustomToast visible={toast.visible} message={toast.message} type={toast.type} onHide={() => setToast({ ...toast, visible: false })} />
 
-                <ScreenHeader
+                <ScreenHeader 
                     title="Gudang & Logistik"
                     subtitle="Manajemen Penyimpanan & Stok"
                     subtitleIcon={<Archive size={10} color="#6366F1" />}
                     searchValue={searchQuery}
                     onSearchChange={setSearchQuery}
-                    searchPlaceholder="Cari nama gudang..."
+                    searchPlaceholder={activeTab === 'WAREHOUSE' ? "Cari nama gudang..." : "Cari material..."}
                     userRole={userRole}
                     branches={branches}
-                    selectedBranchId={selectedBranchId} // SUDAH DINAMIS
-                    onBranchChange={setSelectedBranchId} // BISA DIKLIK 
+                    selectedBranchId={selectedBranchId}
+                    onBranchChange={setSelectedBranchId} 
                     userBranchName={getActiveBranchName()}
                 />
 
-                <View className={`flex-1 p-4 gap-4 ${isDesktop || isTablet ? 'flex-row h-[calc(100vh-140px)]' : 'flex-col'}`}>
+                <View className={`flex-1 p-4 ${isDesktop || isTablet ? 'max-w-[1200px] w-full self-center' : ''}`}>
+                    
+                    {/* --- TAB SWITCHER UI KONSISTEN DENGAN TEMA --- */}
+                    <View className="flex-row p-1 mb-5 bg-white border border-slate-100 rounded-2xl shadow-sm self-start">
+                        <TouchableOpacity 
+                            onPress={() => setActiveTab('WAREHOUSE')}
+                            className={`flex-row items-center px-5 py-2.5 rounded-xl transition-all ${activeTab === 'WAREHOUSE' ? 'shadow-md' : 'bg-transparent'}`}
+                            style={activeTab === 'WAREHOUSE' ? { backgroundColor: primaryColor } : {}}
+                        >
+                            <Archive size={16} color={activeTab === 'WAREHOUSE' ? 'white' : '#64748B'} />
+                            <Text className={`ml-2 text-xs font-black uppercase tracking-widest ${activeTab === 'WAREHOUSE' ? 'text-white' : 'text-slate-500'}`}>Daftar Gudang</Text>
+                        </TouchableOpacity>
 
-                    <View className={`bg-white border border-slate-100 shadow-sm rounded-[32px] overflow-hidden relative ${isDesktop || isTablet ? 'flex-[1.5] h-full' : 'flex-1 min-h-[400px]'}`}>
-                        <View className="flex-row items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
-                            <View>
-                                <Text className="text-sm font-black uppercase tracking-wider text-slate-800">Daftar Gudang</Text>
-                                <Text className="text-[10px] font-bold text-slate-400 mt-1">{filteredWarehouses.length} Gudang Terdaftar</Text>
-                            </View>
-                        </View>
-
-                        {isLoading ? (
-                            <View className="items-center justify-center flex-1"><ActivityIndicator size="large" color="#4F46E5" /></View>
-                        ) : (
-                            <FlatList
-                                data={filteredWarehouses}
-                                renderItem={renderWarehouseCard}
-                                keyExtractor={(item) => item.id}
-                                numColumns={numColumns}
-                                key={numColumns}
-                                contentContainerStyle={{ padding: 10, paddingBottom: 100 }}
-                                showsVerticalScrollIndicator={false}
-                                ListEmptyComponent={<EmptyState icon={<Box size={60} color="#94A3B8" />} message={searchQuery ? 'Gudang tidak ditemukan' : 'Belum ada data gudang'} />}
-                            />
-                        )}
-                        <FloatingActionButton onPress={handleOpenAdd} color={settings.themePrimaryColor || '#4F46E5'} />
+                        <TouchableOpacity 
+                            onPress={() => setActiveTab('RESTOCK')}
+                            className={`flex-row items-center px-5 py-2.5 rounded-xl transition-all ${activeTab === 'RESTOCK' ? 'shadow-md' : 'bg-transparent'}`}
+                            style={activeTab === 'RESTOCK' ? { backgroundColor: primaryColor } : {}}
+                        >
+                            <PackagePlus size={16} color={activeTab === 'RESTOCK' ? 'white' : '#64748B'} />
+                            <Text className={`ml-2 text-xs font-black uppercase tracking-widest ${activeTab === 'RESTOCK' ? 'text-white' : 'text-slate-500'}`}>Pengadaan Stok</Text>
+                        </TouchableOpacity>
                     </View>
 
-                    <View className={`bg-white border border-slate-100 shadow-sm rounded-[32px] overflow-hidden flex-col relative ${isDesktop || isTablet ? 'w-80 lg:w-96 h-full' : 'w-full min-h-[400px]'}`}>
-                        <View className="p-6 bg-slate-900 border-b border-slate-800 items-center justify-center pb-8">
-                            <View className="w-16 h-16 bg-emerald-500/20 rounded-full items-center justify-center mb-3">
-                                <PackagePlus size={32} color="#34D399" />
+                    {/* --- TAB CONTENT: WAREHOUSE --- */}
+                    {activeTab === 'WAREHOUSE' && (
+                        <View className="flex-1 overflow-hidden relative bg-white border shadow-sm border-slate-100 rounded-[32px]">
+                            
+                            {/* HEADER TAB GUDANG IDENTIK */}
+                            <View className="flex-row items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
+                                <View>
+                                    <Text className="text-sm font-black tracking-wider uppercase text-slate-800">Daftar Gudang</Text>
+                                    <Text className="text-[10px] font-bold text-slate-400 mt-1">{filteredWarehouses.length} Gudang Terdaftar</Text>
+                                </View>
                             </View>
-                            <Text className="text-white font-black text-lg uppercase tracking-widest text-center">Pengadaan Stok</Text>
-                            <Text className="text-slate-400 text-xs font-medium mt-1 text-center">Input stok material masuk dari Supplier</Text>
+
+                            {isLoading ? (
+                                <View className="items-center justify-center flex-1"><ActivityIndicator size="large" color={primaryColor} /></View>
+                            ) : (
+                                <FlatList
+                                    data={filteredWarehouses}
+                                    renderItem={renderWarehouseCard}
+                                    keyExtractor={(item) => item.id}
+                                    numColumns={numColumns}
+                                    key={`warehouse-${numColumns}`}
+                                    contentContainerStyle={{ padding: 10, paddingBottom: 100 }}
+                                    showsVerticalScrollIndicator={false}
+                                    ListEmptyComponent={<EmptyState icon={<Archive size={60} color="#94A3B8" />} message={searchQuery ? 'Gudang tidak ditemukan' : 'Belum ada data gudang'} />}
+                                />
+                            )}
+                            {/* FAB IDENTIK */}
+                            <FloatingActionButton onPress={handleOpenAdd} color={primaryColor} />
                         </View>
+                    )}
 
-                        <View className="flex-1 px-5 pt-6 pb-5 overflow-hidden">
-                            <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Master Material</Text>
+                    {/* --- TAB CONTENT: RESTOCK --- */}
+                    {activeTab === 'RESTOCK' && (
+                        <View className="flex-1 overflow-hidden relative bg-white border shadow-sm border-slate-100 rounded-[32px]">
+                            
+                            {/* HEADER TAB RESTOCK IDENTIK */}
+                            <View className="flex-row items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
+                                <View>
+                                    <Text className="text-sm font-black tracking-wider uppercase text-slate-800">Pengadaan Stok</Text>
+                                    <Text className="text-[10px] font-bold text-slate-400 mt-1">Input stok dari Supplier ke Gudang</Text>
+                                </View>
+                            </View>
 
-                            <ScrollView className="flex-1" showsVerticalScrollIndicator={true} nestedScrollEnabled={true} contentContainerStyle={{ paddingBottom: 100 }}>
-                                {materials.length === 0 ? (
-                                    <Text className="text-xs text-slate-400 italic p-2 text-center">Belum ada bahan baku terdaftar.</Text>
-                                ) : (
-                                    materials.map(mat => (
-                                        <View key={mat.id} className="flex-row items-center justify-between p-3 mb-2 bg-slate-50 border border-slate-100 rounded-xl shadow-sm">
-                                            <Text className="text-xs font-bold text-slate-700 flex-1 pr-2" numberOfLines={1}>{mat.name}</Text>
-                                            <Text className="text-[9px] font-black text-slate-400 bg-white px-2 py-1 rounded-md border border-slate-200 flex-shrink-0">
-                                                {mat.unit}
-                                            </Text>
+                            <View className="flex-1 pt-4 pb-5">
+                                <Text className="px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Referensi Daftar Material</Text>
+                                
+                                <FlatList
+                                    data={filteredMaterials}
+                                    keyExtractor={(item) => item.id}
+                                    numColumns={numColumns}
+                                    key={`material-${numColumns}`}
+                                    contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 100 }}
+                                    showsVerticalScrollIndicator={false}
+                                    renderItem={({ item }) => (
+                                        <View style={{ width: `${itemWidth}%`, padding: 6 }}>
+                                            <View className="flex-row items-center p-4 bg-white border shadow-sm border-slate-100 rounded-2xl">
+                                                <View className="items-center justify-center w-10 h-10 mr-4 border bg-indigo-50 rounded-xl border-indigo-100">
+                                                    <PackagePlus color={primaryColor} size={18} />
+                                                </View>
+                                                <View className="flex-1 pr-2">
+                                                    <Text className="text-sm font-bold text-slate-700" numberOfLines={1}>{item.name}</Text>
+                                                </View>
+                                                <View className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-md">
+                                                    <Text className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{item.unit}</Text>
+                                                </View>
+                                            </View>
                                         </View>
-                                    ))
-                                )}
-                            </ScrollView>
-                        </View>
+                                    )}
+                                    ListEmptyComponent={<EmptyState icon={<PackagePlus size={60} color="#94A3B8" />} message={searchQuery ? 'Bahan baku tidak ditemukan' : 'Bahan baku kosong'} />}
+                                />
+                            </View>
 
-                        <FloatingActionButton onPress={handleOpenRestock} color={'#10B981'} />
-                    </View>
+                            {/* FAB IDENTIK */}
+                            <FloatingActionButton onPress={() => handleOpenRestock()} color={primaryColor} />
+                        </View>
+                    )}
+
                 </View>
 
+                {/* MODALS */}
                 <WarehouseFormModal visible={isFormVisible} onClose={() => setFormVisible(false)} onSubmit={handleFormSubmit} initialData={selectedWarehouse} />
                 <WarehouseDetailModal visible={isDetailVisible} warehouseId={activeWarehouseId} onClose={() => setDetailVisible(false)} onEdit={(wh: any) => { setDetailVisible(false); setSelectedWarehouse(wh); setTimeout(() => setFormVisible(true), 300); }} onDelete={(id: string) => { setDetailVisible(false); setDeleteModal({ visible: true, warehouseId: id }); }} onRestock={(id: string) => { setDetailVisible(false); setTimeout(() => handleOpenRestock(id), 300); }} />
                 <RestockFormModal visible={isRestockVisible} onClose={() => setRestockVisible(false)} onSubmit={handleRestockSubmit} warehouses={warehouses} initialWarehouseId={activeWarehouseId} />

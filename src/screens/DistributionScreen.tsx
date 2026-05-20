@@ -8,7 +8,7 @@ import { useDistributionStore } from '../stores/distributionStore';
 import { useWarehouseStore } from '../stores/warehouseStore';
 import { useMaterialStore } from '../stores/materialStore';
 import { useSettingStore } from '../stores/settingStore';
-import { useBranchStore } from '../stores/branchStore'; // IMPORT GLOBAL BRANCH STORE
+import { useBranchStore } from '../stores/branchStore'; 
 
 import MainLayout from '../components/MainLayout';
 import ScreenHeader from '../components/ScreenHeader';
@@ -32,7 +32,6 @@ export default function DistributionScreen() {
     const { warehouses, fetchWarehouses } = useWarehouseStore();
     const { materials, fetchMaterials } = useMaterialStore();
     
-    // --- STATE CABANG GLOBAL ---
     const { branches, fetchBranches, selectedBranchId, setSelectedBranchId } = useBranchStore();
 
     const [isFormVisible, setFormVisible] = useState(false);
@@ -43,7 +42,7 @@ export default function DistributionScreen() {
     const [searchQuery, setSearchQuery] = useState('');
 
     const [userRole, setUserRole] = useState('');
-    const [userBranchId, setUserBranchId] = useState(''); // Untuk filter role non-owner
+    const [userBranchId, setUserBranchId] = useState(''); 
 
     useEffect(() => {
         const initData = async () => {
@@ -52,7 +51,7 @@ export default function DistributionScreen() {
                 if (u) {
                     const parsed = JSON.parse(u);
                     setUserRole(parsed.role || '');
-                    setUserBranchId(parsed.branchId || ''); // Simpan real user branchId
+                    setUserBranchId(parsed.branchId || ''); 
                 }
             } catch (error) { console.log(error); }
         };
@@ -69,8 +68,20 @@ export default function DistributionScreen() {
         try {
             await createDistribution(data);
             showToast('Surat Jalan berhasil dibuat dan dikirim!', 'success');
-        } catch (error) {
-            showToast('Gagal mengirim distribusi.', 'error');
+        } catch (error: any) {
+            // MENANGKAP PESAN ERROR SPESIFIK DARI BACKEND ZOD / PRISMA
+            const errorData = error.response?.data;
+            let errorMsg = errorData?.message || 'Gagal mengirim distribusi.';
+            
+            if (errorData?.errors && Array.isArray(errorData.errors)) {
+                errorMsg = errorData.errors.map((e: any) => e.message).join('\n');
+            } else if (errorData?.error?.issues && Array.isArray(errorData.error.issues)) {
+                errorMsg = errorData.error.issues.map((i: any) => i.message).join('\n');
+            } else if (errorData?.error) {
+                errorMsg += `\nDetail: ${errorData.error}`;
+            }
+            
+            showToast(errorMsg, 'error');
         }
     };
 
@@ -79,24 +90,21 @@ export default function DistributionScreen() {
             await receiveDistribution(id);
             setDetailVisible(false);
             showToast('Barang diterima! Stok cabang otomatis bertambah.', 'success');
-        } catch (error) {
-            showToast('Gagal memproses penerimaan.', 'error');
+        } catch (error: any) {
+            const errorData = error.response?.data;
+            showToast(errorData?.message || 'Gagal memproses penerimaan.', 'error');
         }
     };
 
-    // Filter: Tampilkan berdasarkan search dan cabang terpilih (Jika bukan owner, cabang fix)
     const filteredData = distributions.filter((d: any) => {
         const matchSearch = d.sourceWarehouse?.name.toLowerCase().includes(searchQuery.toLowerCase()) || d.destBranch?.name.toLowerCase().includes(searchQuery.toLowerCase());
         
-        // Cek cabang
         let matchBranch = true;
         if (userRole === 'OWNER' || userRole === 'MANAGER') {
-             // Tampilkan semua jika selectedBranchId == all, jika tidak cocokan dengan cabang di store
-             if (selectedBranchId !== 'all') {
+             if (selectedBranchId && selectedBranchId !== 'all') {
                  matchBranch = d.destBranchId === selectedBranchId;
              }
         } else {
-             // Non owner/manager hanya bisa lihat cabang miliknya
              matchBranch = d.destBranchId === userBranchId;
         }
 
@@ -114,15 +122,15 @@ export default function DistributionScreen() {
         const isReceived = item.status === 'RECEIVED';
         return (
             <View style={{ width: `${itemWidth}%`, padding: 6 }}>
-                <TouchableOpacity onPress={() => { setSelectedDistribution(item); setDetailVisible(true); }} className="flex-row items-center p-4 bg-white border shadow-sm rounded-2xl border-slate-100">
-                    <View className={`items-center justify-center mr-4 border w-12 h-12 rounded-xl ${isReceived ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
+                <TouchableOpacity onPress={() => { setSelectedDistribution(item); setDetailVisible(true); }} className="flex-row items-center p-4 bg-white border shadow-sm rounded-3xl border-slate-100">
+                    <View className={`items-center justify-center mr-4 border w-12 h-12 rounded-2xl ${isReceived ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
                         {isReceived ? <CheckCircle2 color="#10B981" size={20} /> : <Truck color="#F59E0B" size={20} />}
                     </View>
                     <View className="justify-center flex-1 pr-1">
-                        <Text className="text-xs font-black text-slate-800 leading-tight mb-0.5" numberOfLines={1}>{item.sourceWarehouse?.name} → {item.destBranch?.name}</Text>
-                        <Text className="text-[9px] font-bold text-slate-400 mb-1" numberOfLines={1}>{moment(item.dispatchedAt).format('DD MMM YYYY')}</Text>
-                        <View className="self-start mt-1">
-                            <Text className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${isReceived ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                        <Text className="text-[13px] font-black text-slate-800 leading-tight mb-1" numberOfLines={1}>{item.sourceWarehouse?.name} → {item.destBranch?.name}</Text>
+                        <Text className="text-[9px] font-bold text-slate-400 mb-2" numberOfLines={1}>{moment(item.dispatchedAt).format('DD MMM YYYY, HH:mm')}</Text>
+                        <View className="self-start">
+                            <Text className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${isReceived ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
                                 {isReceived ? 'Diterima' : 'In Transit'}
                             </Text>
                         </View>
@@ -146,14 +154,14 @@ export default function DistributionScreen() {
                     searchPlaceholder="Cari riwayat pengiriman..."
                     userRole={userRole}
                     branches={branches}
-                    selectedBranchId={selectedBranchId} // DIHUBUNGKAN KE ZUSTAND
-                    onBranchChange={setSelectedBranchId} // BISA KLIK!
+                    selectedBranchId={selectedBranchId}
+                    onBranchChange={setSelectedBranchId}
                     userBranchName={getActiveBranchName()}
-                    showAllBranchOption={true} // Boleh nampilkan option "Semua Cabang"
+                    showAllBranchOption={true} 
                 />
 
                 {isLoading ? (
-                    <View className="items-center justify-center flex-1"><ActivityIndicator size="large" color="#4F46E5" /></View>
+                    <View className="items-center justify-center flex-1"><ActivityIndicator size="large" color={settings.themePrimaryColor || "#4F46E5"} /></View>
                 ) : (
                     <FlatList
                         data={filteredData}
@@ -167,8 +175,7 @@ export default function DistributionScreen() {
                     />
                 )}
 
-                {/* Tombol Buat Distribusi hanya untuk Pusat / OWNER */}
-                {(userRole === 'OWNER' || userRole === 'MANAGER') && (
+                {(userRole === 'Owner' || userRole === 'MANAGER' || userRole === 'OWNER') && (
                     <FloatingActionButton onPress={() => setFormVisible(true)} color={settings.themePrimaryColor || '#4F46E5'} />
                 )}
 
