@@ -2,14 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     View, Text, ScrollView, TouchableOpacity, TextInput,
     Image, Modal, useWindowDimensions, KeyboardAvoidingView, Platform,
-    Alert
+    Alert, ActivityIndicator
 } from 'react-native';
 import {
     Search, ShoppingCart, Trash2, Plus, Minus, X,
     LayoutGrid, LayoutList, Ticket, Clock,
-    ChevronRight, LayoutPanelLeft,
-    Package, StickyNote, Edit3,
-    Tag, Calculator, Delete
+    ChevronRight, Package, StickyNote,
+    Calculator, Delete, User, Tag
 } from 'lucide-react-native';
 import MainLayout from '../components/MainLayout';
 import MyInput from '../components/MyInput';
@@ -40,7 +39,7 @@ export default function POSScreen() {
     const { products, fetchProducts } = useProductStore();
     const { categories, fetchCategories } = useCategoryStore();
 
-    const [user, setUser] = useState<any>(null); // State untuk menyimpan info user/branch
+    const [user, setUser] = useState<any>(null); 
     const [search, setSearch] = useState('');
     const [selectedCat, setSelectedCat] = useState<number | null>(null);
     const [showPayment, setShowPayment] = useState(false);
@@ -60,6 +59,10 @@ export default function POSScreen() {
     const [showOpenPriceModal, setShowOpenPriceModal] = useState(false);
     const [manualPrice, setManualPrice] = useState('');
     const [pendingItem, setPendingItem] = useState<{ product: any, variant: any } | null>(null);
+
+    const [memberPhone, setMemberPhone] = useState('');
+    const [isVerifyingMember, setIsVerifyingMember] = useState(false);
+    const [promoCodeInput, setPromoCodeInput] = useState('');
 
     useEffect(() => {
         if (isMedium) pos.setCartVisible(true);
@@ -86,17 +89,54 @@ export default function POSScreen() {
         if (pos.currentOrder?.customerName) setCustomerName(pos.currentOrder.customerName);
     }, [pos.currentOrder]);
 
-    const totals = useMemo(() => {
+    const calculations = useMemo(() => {
         const subtotal = pos.cart.reduce((acc: number, i: any) => acc + i.subtotal, 0);
-        return { subtotal, total: subtotal };
-    }, [pos.cart]);
+        let promoDiscount = 0;
+        
+        if (pos.selectedPromo) {
+            promoDiscount = pos.selectedPromo.discountPct 
+                ? (subtotal * pos.selectedPromo.discountPct) / 100 
+                : Number(pos.selectedPromo.discountAmt || 0);
+            if (pos.selectedPromo.maxDiscount && promoDiscount > pos.selectedPromo.maxDiscount) {
+                promoDiscount = Number(pos.selectedPromo.maxDiscount);
+            }
+        }
+        
+        return { 
+            subtotal, 
+            promoDiscount, 
+            totalAfterPromo: Math.max(0, subtotal - promoDiscount) 
+        };
+    }, [pos.cart, pos.selectedPromo]);
+
+    // --- PERBAIKAN BUG FATAL: LOGIKA PENGAMBILAN HARGA ---
+    const getProductPriceLabel = (p: any) => {
+        if (p.openPrice) return "Open Price";
+        
+        // Jika product memiliki array variants dan isinya tidak kosong
+        if (p.variants && p.variants.length > 0) {
+            if (p.variants.length > 1) {
+                const minPrice = Math.min(...p.variants.map((v: any) => Number(v.price || 0)));
+                return `Rp ${minPrice.toLocaleString('id-ID')}`;
+            }
+            return `Rp ${Number(p.variants[0].price || 0).toLocaleString('id-ID')}`;
+        }
+        
+        // Fallback darurat jika variants kosong
+        return `Rp ${Number(p.price || 0).toLocaleString('id-ID')}`;
+    };
 
     const handleProductPress = (product: any) => {
-        if (product.hasVariants && product.variants.length > 1) {
+        // Pengecekan aman jika variants lebih dari 1
+        if (product.variants && product.variants.length > 1) {
             setSelectedProduct(product);
             setShowVariantModal(true);
         } else {
-            const variant = product.variants[0];
+            // Ambil varian pertama. Jika kosong, buat varian 'Virtual' agar tidak crash di keranjang
+            const variant = (product.variants && product.variants.length > 0) 
+                ? product.variants[0] 
+                : { id: product.id, name: 'Reguler', price: product.price || 0 };
+            
             if (product.openPrice) {
                 setPendingItem({ product, variant });
                 setManualPrice('');
@@ -127,38 +167,56 @@ export default function POSScreen() {
     const handleConfirmOpenPrice = () => {
         const price = Number(manualPrice);
         if (!manualPrice || price <= 0) return Alert.alert("Harga Wajib Diisi", "Mohon masukkan nominal harga yang valid.");
-        
-        if (pendingItem) {
-            const variantWithManualPrice = { ...pendingItem.variant, price: price };
-            pos.addToCart(pendingItem.product, variantWithManualPrice);
-        }
+        if (pendingItem) pos.addToCart(pendingItem.product, { ...pendingItem.variant, price: price });
         setShowOpenPriceModal(false);
         setManualPrice('');
         setPendingItem(null);
     };
 
-    // --- FASE 1 & 2: PERBAIKAN LOGIKA SIMPAN TIKET (OPEN BILL) ---
+    const handleVerifyMember = async () => {
+        if (!memberPhone) return;
+        setIsVerifyingMember(true);
+        try {
+            const res = await api.get('/crm/members');
+            const memberList = res.data.data || [];
+            const member = memberList.find((m: any) => m.phone === memberPhone);
+            if (member) {
+                pos.setSelectedMember(member);
+                setMemberPhone('');
+            } else {
+                alert('Member tidak ditemukan atau belum terdaftar.');
+            }
+        } catch (e) {
+            alert('Gagal mencari member');
+        } finally {
+            setIsVerifyingMember(false);
+        }
+    };
+
+    const handleApplyPromo = () => {
+        if (!promoCodeInput) return;
+        const success = pos.applyPromoCode(promoCodeInput);
+        if (!success) alert('Kode Promo tidak valid, kadaluarsa, atau syarat belum terpenuhi.');
+        setPromoCodeInput('');
+    };
+
     const handleSaveTicket = async () => {
-        if (!customerName && !pos.currentOrder?.customerName) return alert("Mohon isi Nama Pelanggan");
+        if (!customerName && !pos.currentOrder?.customerName && !pos.selectedMember) return alert("Mohon isi Nama Pelanggan atau pilih Member");
         try {
             const branchIdToUse = user?.branch?.id || user?.branchId;
-            
-            // Payload disesuaikan strictly dengan createOrderSchema di pos.controller.ts
             const payload = {
                 branchId: branchIdToUse,
                 orderType: orderType,
-                customerName: customerName || pos.currentOrder?.customerName || "Walk-in",
-                paymentStatus: 'UNPAID', // Ini kunci bahwa ini adalah Open Bill
+                customerName: pos.selectedMember ? pos.selectedMember.name : (customerName || pos.currentOrder?.customerName || "Walk-in"),
+                memberId: pos.selectedMember ? pos.selectedMember.id : undefined,
+                paymentStatus: 'UNPAID',
                 items: pos.cart.map((item: any) => ({
                     variantId: item.variantId,
                     quantity: item.quantity,
                 })),
             };
 
-            // Jika sedang update order yang sudah ada, harusnya PATCH (bisa disesuaikan nanti, smentara kita fokus CREATE sesuai backend yg ada)
-            // Endpoint diubah ke /pos/orders
             await api.post('/pos/orders', payload);
-            
             alert("Tiket Berhasil Disimpan & Dikirim ke Dapur!");
             pos.resetPOS();
             setShowSaveModal(false);
@@ -176,7 +234,6 @@ export default function POSScreen() {
         <MainLayout>
             <View className="relative flex-row flex-1 bg-slate-50">
 
-                {/* --- CATALOG AREA --- */}
                 <View className="flex-1 p-3 md:p-5">
                     <View className={`${isMedium ? 'flex-row' : 'flex-col'} gap-3 mb-3`}>
                         <View className="flex-row items-center flex-1 h-12 px-4 bg-white border shadow-sm rounded-2xl border-slate-100">
@@ -187,7 +244,7 @@ export default function POSScreen() {
                                 className="flex-1 h-full py-0 ml-2 font-bold text-slate-900"
                                 value={search}
                                 onChangeText={setSearch}
-                                keyboardType="default"
+                                style={Platform.OS === 'web' ? { outlineStyle: 'none' } as any : undefined}
                             />
                             {search !== '' && (
                                 <TouchableOpacity onPress={() => setSearch('')}>
@@ -259,9 +316,12 @@ export default function POSScreen() {
                                         </View>
                                         <View className={`${pos.viewMode === 'list' ? 'flex-1 ml-3 min-w-0' : 'p-2.5'}`}>
                                             <Text className="text-[11px] font-bold text-slate-800" numberOfLines={1}>{p.name}</Text>
+                                            
+                                            {/* PERBAIKAN DIRENDER DISINI */}
                                             <Text className="mt-0.5 text-[11px] font-black" style={{ color: settings.themeSecondaryColor }}>
-                                                {p.openPrice ? "Open Price" : `Rp ${p.variants.length > 1 ? Math.min(...p.variants.map((v: any) => Number(v.price))).toLocaleString() : Number(p.variants[0].price).toLocaleString()}`}
+                                                {getProductPriceLabel(p)}
                                             </Text>
+
                                         </View>
                                     </View>
                                 </TouchableOpacity>
@@ -270,7 +330,6 @@ export default function POSScreen() {
                     </ScrollView>
                 </View>
 
-                {/* --- SIDEBAR CART --- */}
                 {pos.isCartVisible && (
                     <View
                         style={{
@@ -278,10 +337,10 @@ export default function POSScreen() {
                             position: isLarge ? 'relative' : 'absolute',
                             right: 0, top: 0, bottom: 0, zIndex: 100
                         }}
-                        className="h-full bg-white border-l shadow-2xl border-slate-100"
+                        className="h-full bg-white border-l shadow-2xl border-slate-100 flex-col"
                     >
-                        <View className="flex-1 p-5">
-                            <View className="flex-row items-center justify-between mb-5">
+                        <View className="flex-1 p-5 flex-col">
+                            <View className="flex-row items-center justify-between mb-4">
                                 <View className="flex-row items-center">
                                     <TouchableOpacity onPress={() => pos.setCartVisible(false)} className="p-2 mr-2 rounded-full bg-slate-100"><ChevronRight size={20} color="#64748B" /></TouchableOpacity>
                                     <Text className="text-xl font-black text-slate-800">KERANJANG</Text>
@@ -289,7 +348,37 @@ export default function POSScreen() {
                                 <TouchableOpacity onPress={() => pos.resetPOS()} className="p-2 bg-rose-50 rounded-xl"><Trash2 size={18} color="#F43F5E" /></TouchableOpacity>
                             </View>
 
-                            <View className="flex-row p-1 mb-4 bg-slate-100 rounded-xl">
+                            {pos.selectedMember ? (
+                                <View className="flex-row items-center justify-between p-3 mb-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+                                    <View className="flex-row items-center flex-1">
+                                        <View className="p-1.5 bg-white rounded-lg"><User size={16} color="#4F46E5" /></View>
+                                        <View className="ml-3">
+                                            <Text className="text-xs font-bold text-slate-800" numberOfLines={1}>{pos.selectedMember.name}</Text>
+                                            <Text className="text-[10px] text-indigo-600 font-black">{pos.selectedMember.points} Poin Loyalitas</Text>
+                                        </View>
+                                    </View>
+                                    <TouchableOpacity onPress={() => pos.setSelectedMember(null)} className="p-1"><X size={16} color="#F43F5E" /></TouchableOpacity>
+                                </View>
+                            ) : (
+                                <View className="flex-row items-center h-12 px-3 mb-4 border bg-slate-50 rounded-xl border-slate-200">
+                                    <Search size={16} color="#94A3B8" />
+                                    <TextInput
+                                        placeholder="Cari No. HP Member..."
+                                        placeholderTextColor="#94A3B8"
+                                        className="flex-1 h-full ml-2 text-xs font-bold text-slate-700"
+                                        value={memberPhone}
+                                        onChangeText={setMemberPhone}
+                                        keyboardType="numeric"
+                                        style={Platform.OS === 'web' ? { outlineStyle: 'none' } as any : undefined}
+                                        onSubmitEditing={handleVerifyMember}
+                                    />
+                                    <TouchableOpacity onPress={handleVerifyMember} className="bg-indigo-600 p-2 rounded-lg ml-1">
+                                        {isVerifyingMember ? <ActivityIndicator size="small" color="white" /> : <Text className="text-[9px] font-black text-white uppercase">Cek</Text>}
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            <View className="flex-row p-1 mb-3 bg-slate-100 rounded-xl">
                                 {['DINE_IN', 'TAKE_HOME', 'ONLINE'].map((type) => (
                                     <TouchableOpacity key={type} onPress={() => setOrderType(type as any)} className={`flex-1 py-2 rounded-lg items-center ${orderType === type ? 'bg-white shadow-sm' : ''}`}>
                                         <Text className={`font-black text-[9px] ${orderType === type ? 'text-indigo-600' : 'text-slate-400'}`}>{type.replace('_', ' ')}</Text>
@@ -298,8 +387,8 @@ export default function POSScreen() {
                             </View>
 
                             <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-                                {pos.cart.map((item: any) => (
-                                    <View className="flex-row p-3 mb-2 bg-white border border-slate-100 rounded-xl" key={item.variantId}>
+                                {pos.cart.map((item: any, idx: number) => (
+                                    <View className="flex-row p-3 mb-2 bg-white border border-slate-100 rounded-xl" key={idx}>
                                         <View className="flex-1 mr-2">
                                             <Text className="text-xs font-bold text-slate-800" numberOfLines={1}>{item.name.split(' (')[0]}</Text>
                                             {item.variantName && (
@@ -313,26 +402,18 @@ export default function POSScreen() {
                                                 {item.isProductDiscounted && (
                                                     <>
                                                         <Tag size={10} color="#EF4444" style={{ marginRight: 4 }} />
-                                                        <Text className="text-[10px] font-black text-red-600">
-                                                            Rp {item.price.toLocaleString()}
-                                                        </Text>
-                                                        <Text className="ml-2 text-[8px] text-slate-300 line-through">
-                                                            Rp {item.originalPrice.toLocaleString()}
-                                                        </Text>
+                                                        <Text className="text-[10px] font-black text-red-600">Rp {item.price.toLocaleString('id-ID')}</Text>
+                                                        <Text className="ml-2 text-[8px] text-slate-300 line-through">Rp {item.originalPrice.toLocaleString('id-ID')}</Text>
                                                     </>
                                                 )}
                                                 {item.isBundleApplied && (
                                                     <>
                                                         <Tag size={10} color="#10B981" style={{ marginRight: 4 }} />
-                                                        <Text className="text-[10px] font-black text-emerald-600">
-                                                            Bundle Applied
-                                                        </Text>
+                                                        <Text className="text-[10px] font-black text-emerald-600">Bundle Applied</Text>
                                                     </>
                                                 )}
                                                 {!item.isProductDiscounted && !item.isBundleApplied && (
-                                                    <Text className="text-[10px] font-black text-slate-400">
-                                                        Rp {item.price.toLocaleString()}
-                                                    </Text>
+                                                    <Text className="text-[10px] font-black text-slate-400">Rp {item.price.toLocaleString('id-ID')}</Text>
                                                 )}
                                             </View>
                                             <TouchableOpacity onPress={() => handleOpenNote(item)} className="flex-row items-center mt-1">
@@ -351,17 +432,58 @@ export default function POSScreen() {
                                 ))}
                             </ScrollView>
 
-                            <View className="pt-4 border-t border-slate-100">
-                                <View className="flex-row items-end justify-between mb-4">
-                                    <Text className="text-sm font-bold uppercase text-slate-400">Total</Text>
-                                    <Text className="text-xl font-black text-indigo-600">Rp {totals.total.toLocaleString()}</Text>
+                            <View className="pt-4 mt-2 border-t border-slate-100">
+                                <View className="flex-row items-center h-10 mb-3 border bg-slate-50 rounded-xl border-slate-200">
+                                    <View className="px-3"><Tag size={14} color="#94A3B8" /></View>
+                                    <TextInput
+                                        placeholder="Kode Promo..."
+                                        placeholderTextColor="#94A3B8"
+                                        className="flex-1 h-full py-0 text-xs font-bold text-slate-700 uppercase"
+                                        value={promoCodeInput}
+                                        onChangeText={setPromoCodeInput}
+                                        style={Platform.OS === 'web' ? { outlineStyle: 'none' } as any : undefined}
+                                        autoCapitalize="characters"
+                                    />
+                                    {pos.selectedPromo ? (
+                                        <TouchableOpacity onPress={() => pos.removePromo()} className="bg-rose-500 p-2 rounded-r-xl h-full justify-center">
+                                            <Text className="text-[9px] font-black text-white uppercase">Hapus</Text>
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <TouchableOpacity onPress={handleApplyPromo} className="bg-slate-800 p-2 rounded-r-xl h-full justify-center px-4">
+                                            <Text className="text-[9px] font-black text-white uppercase">Gunakan</Text>
+                                        </TouchableOpacity>
+                                    )}
                                 </View>
+
+                                <View className="flex-row items-center justify-between mb-1">
+                                    <Text className="text-[11px] font-bold text-slate-400">Subtotal</Text>
+                                    <Text className="text-[11px] font-bold text-slate-600">Rp {calculations.subtotal.toLocaleString('id-ID')}</Text>
+                                </View>
+                                {calculations.promoDiscount > 0 && (
+                                    <View className="flex-row items-center justify-between mb-1">
+                                        <Text className="text-[11px] font-bold text-emerald-500">Diskon ({pos.selectedPromo?.code})</Text>
+                                        <Text className="text-[11px] font-bold text-emerald-500">- Rp {calculations.promoDiscount.toLocaleString('id-ID')}</Text>
+                                    </View>
+                                )}
+                                <View className="flex-row items-end justify-between mt-2 mb-4">
+                                    <Text className="text-sm font-bold uppercase text-slate-800">Total Akhir</Text>
+                                    <Text className="text-2xl font-black tracking-tighter text-indigo-600">Rp {calculations.totalAfterPromo.toLocaleString('id-ID')}</Text>
+                                </View>
+
                                 <View className="flex-row gap-2">
-                                    <TouchableOpacity onPress={() => setShowSaveModal(true)} disabled={pos.cart.length === 0} className={`items-center justify-center p-3 border rounded-2xl ${pos.cart.length === 0 ? 'bg-slate-100 border-slate-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                                    <TouchableOpacity 
+                                        onPress={() => setShowSaveModal(true)} 
+                                        disabled={pos.cart.length === 0} 
+                                        className={`items-center justify-center px-4 border rounded-2xl ${pos.cart.length === 0 ? 'bg-slate-100 border-slate-200' : 'bg-white border-slate-200 shadow-sm active:bg-slate-50'}`}
+                                    >
                                         <Ticket size={20} color={pos.cart.length === 0 ? '#CBD5E1' : '#64748B'} />
                                     </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => setShowPayment(true)} disabled={pos.cart.length === 0} className={`flex-1 py-4 rounded-2xl items-center ${pos.cart.length === 0 ? 'bg-slate-200' : 'bg-indigo-600 shadow-lg'}`}>
-                                        <Text className="text-lg font-black text-white uppercase">BAYAR</Text>
+                                    <TouchableOpacity 
+                                        onPress={() => setShowPayment(true)} 
+                                        disabled={pos.cart.length === 0} 
+                                        className={`flex-1 py-4 rounded-2xl items-center justify-center flex-row ${pos.cart.length === 0 ? 'bg-slate-200' : 'bg-indigo-600 shadow-lg active:scale-95'}`}
+                                    >
+                                        <Text className="text-lg font-black tracking-widest text-white uppercase">BAYAR</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -370,7 +492,6 @@ export default function POSScreen() {
                 )}
             </View>
 
-            {/* --- MODAL PILIHAN VARIAN --- */}
             <Modal visible={showVariantModal} transparent animationType="fade">
                 <View className="items-center justify-center flex-1 p-6 bg-black/60">
                     <View className="bg-white w-full max-w-md rounded-[40px] p-8 shadow-2xl">
@@ -380,7 +501,7 @@ export default function POSScreen() {
                         </View>
                         <Text className="mb-4 text-base font-bold text-slate-500">{selectedProduct?.name}</Text>
                         <ScrollView className="max-h-80">
-                            {selectedProduct?.variants.map((v: any) => (
+                            {selectedProduct?.variants && selectedProduct.variants.map((v: any) => (
                                 <TouchableOpacity
                                     key={v.id}
                                     onPress={() => {
@@ -407,7 +528,6 @@ export default function POSScreen() {
                 </View>
             </Modal>
 
-            {/* --- MODAL OPEN PRICE (KALKULATOR COMPACT) --- */}
             <Modal visible={showOpenPriceModal} transparent animationType="fade">
                 <View className="items-center justify-center flex-1 p-4 bg-black/60">
                     <View style={{ maxHeight: height * 0.85 }} className="bg-white w-full max-w-[340px] rounded-[40px] p-5 shadow-2xl overflow-hidden">
@@ -467,7 +587,6 @@ export default function POSScreen() {
                 </View>
             </Modal>
 
-            {/* --- MODAL INPUT CATATAN (NOTES) --- */}
             <Modal visible={showNoteModal} transparent animationType="fade" onRequestClose={() => setShowNoteModal(false)}>
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="items-center justify-center flex-1 p-6 bg-black/60">
                     <View className="bg-white w-full max-w-sm rounded-[35px] p-6 shadow-2xl">
@@ -498,7 +617,6 @@ export default function POSScreen() {
                 </KeyboardAvoidingView>
             </Modal>
 
-            {/* --- MODAL DAFTAR TICKET --- */}
             <Modal visible={showOpenTicketList} transparent animationType="slide">
                 <View className="items-center justify-center flex-1 p-6 bg-black/60">
                     <View className="bg-white w-full max-w-2xl rounded-[50px] overflow-hidden shadow-2xl">
@@ -550,39 +668,17 @@ export default function POSScreen() {
                                         <Text className="text-[10px] font-black text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded-md mt-1">{t.items.length} Items</Text>
                                     </View>
 
-                                    {/* FASE 1: PERBAIKAN LOGIKA DELETE MENJADI PATCH STATUS CANCELED */}
                                     <TouchableOpacity
                                         onPress={() => {
-                                            const title = "Batalkan Tiket";
-                                            const message = "Apakah Anda yakin ingin membatalkan tiket ini secara permanen?";
                                             const branchIdToUse = user?.branch?.id || user?.branchId;
-
                                             if (Platform.OS === 'web') {
-                                                const confirmed = window.confirm(`${title}\n\n${message}`);
-                                                if (confirmed) {
-                                                    (async () => {
-                                                        try {
-                                                            await api.patch(`/pos/orders/${t.id}/status`, { status: 'CANCELED' });
-                                                            await pos.fetchOpenTickets(branchIdToUse);
-                                                        } catch (e) {
-                                                            alert("Gagal membatalkan tiket yang sudah diproses atau terjadi kesalahan server.");
-                                                        }
-                                                    })();
+                                                if (window.confirm("Apakah Anda yakin ingin membatalkan tiket ini secara permanen?")) {
+                                                    api.patch(`/pos/orders/${t.id}/status`, { status: 'CANCELED' }).then(() => pos.fetchOpenTickets(branchIdToUse));
                                                 }
                                             } else {
-                                                Alert.alert(title, message, [
+                                                Alert.alert("Batalkan Tiket", "Yakin batalkan tiket ini?", [
                                                     { text: "Batal", style: "cancel" },
-                                                    {
-                                                        text: "Batalkan", style: "destructive",
-                                                        onPress: async () => {
-                                                            try {
-                                                                await api.patch(`/pos/orders/${t.id}/status`, { status: 'CANCELED' });
-                                                                await pos.fetchOpenTickets(branchIdToUse);
-                                                            } catch (e) {
-                                                                Alert.alert("Gagal", "Tidak dapat membatalkan tiket yang sudah diproses.");
-                                                            }
-                                                        }
-                                                    }
+                                                    { text: "Batalkan", style: "destructive", onPress: () => api.patch(`/pos/orders/${t.id}/status`, { status: 'CANCELED' }).then(() => pos.fetchOpenTickets(branchIdToUse)) }
                                                 ]);
                                             }
                                         }}
@@ -603,7 +699,6 @@ export default function POSScreen() {
                 </View>
             </Modal>
 
-            {/* --- MODAL SIMPAN TICKET --- */}
             <Modal visible={showSaveModal} transparent animationType="fade">
                 <View className="items-center justify-center flex-1 p-6 bg-black/60">
                     <View className="bg-white w-full max-w-sm rounded-[45px] p-10 shadow-2xl">
@@ -611,7 +706,9 @@ export default function POSScreen() {
                             <View className="p-4 mb-4 bg-indigo-100 rounded-full"><Ticket size={40} color="#4F46E5" /></View>
                             <Text className="text-2xl italic font-black uppercase text-slate-900">SIMPAN DULU</Text>
                         </View>
-                        <MyInput label="Nama Pelanggan / Nomor Meja" placeholder="Ex: Meja 09" value={customerName} onChangeText={setCustomerName} primaryColor="#4F46E5" />
+                        {!pos.selectedMember && (
+                            <MyInput label="Nama Pelanggan / Nomor Meja" placeholder="Ex: Meja 09" value={customerName} onChangeText={setCustomerName} primaryColor="#4F46E5" />
+                        )}
                         <TouchableOpacity onPress={handleSaveTicket} className="w-full py-6 bg-indigo-600 rounded-[30px] items-center mt-8 shadow-xl shadow-indigo-300 active:scale-95">
                             <Text className="text-lg font-black tracking-widest text-white uppercase">SIMPAN TRANSAKSI</Text>
                         </TouchableOpacity>
@@ -622,7 +719,12 @@ export default function POSScreen() {
                 </View>
             </Modal>
 
-            <PaymentModal visible={showPayment} total={totals.total} orderType={orderType} onClose={() => setShowPayment(false)} />
+            <PaymentModal 
+                visible={showPayment} 
+                total={calculations.totalAfterPromo} 
+                orderType={orderType} 
+                onClose={() => setShowPayment(false)} 
+            />
         </MainLayout>
     );
 }

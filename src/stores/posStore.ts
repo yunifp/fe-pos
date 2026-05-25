@@ -7,6 +7,7 @@ interface POSState {
     viewMode: 'grid' | 'list';
     currentOrder: any | null;
     selectedMember: any | null;
+    selectedPromo: any | null; // STATE PROMO TRANSAKSI
     openTickets: any[];
     availablePromotions: any[];
 
@@ -17,6 +18,8 @@ interface POSState {
     addToCart: (product: any, variant: any) => void;
     updateQty: (variantId: number, delta: number) => void;
     updateItemNotes: (variantId: number, notes: string) => void;
+    applyPromoCode: (code: string) => boolean;
+    removePromo: () => void;
     loadTicket: (order: any) => void;
     resetPOS: () => void;
     setCartVisible: (val: boolean) => void;
@@ -30,6 +33,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
     viewMode: 'grid',
     currentOrder: null,
     selectedMember: null,
+    selectedPromo: null,
     openTickets: [],
     availablePromotions: [],
 
@@ -163,23 +167,34 @@ export const usePOSStore = create<POSState>((set, get) => ({
         }));
     },
 
+    // --- FUNGSI VALIDASI PROMO ---
+    applyPromoCode: (code: string) => {
+        const promos = get().availablePromotions || [];
+        // Cari promo transaksi yang cocok dengan kode
+        const found = promos.find(p => p.code.toUpperCase() === code.toUpperCase() && p.type === 'TRANSACTION' && p.isActive);
+        if (found) {
+            set({ selectedPromo: found });
+            return true;
+        }
+        return false;
+    },
+
+    removePromo: () => set({ selectedPromo: null }),
+
     fetchAvailablePromos: async (branchId: string) => {
         try {
-            const res = await api.get('/promotions', { params: { branchId } });
-            set({ availablePromotions: res.data || [] });
+            const res = await api.get('/crm/promos', { params: { branchId } }); // Menyesuaikan dengan backend CRM
+            set({ availablePromotions: res.data.data || [] });
         } catch (e) {
             set({ availablePromotions: [] });
         }
     },
 
-    // --- FASE 1: PERBAIKAN ENDPOINT FETCH TICKET ---
     fetchOpenTickets: async (branchId?: string) => {
         try {
             const params: any = { status: 'PENDING' };
             if (branchId) params.branchId = branchId;
-            
             const res = await api.get('/pos/orders', { params });
-            // Backend mengirim data dalam bentuk { success: true, data: [...] }
             set({ openTickets: res.data.data || [] });
         } catch (e) { console.error(e); }
     },
@@ -211,7 +226,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
         });
     },
 
-    resetPOS: () => set({ cart: [], currentOrder: null, selectedMember: null, isCartVisible: false }),
+    resetPOS: () => set({ cart: [], currentOrder: null, selectedMember: null, selectedPromo: null, isCartVisible: false }),
     setCartVisible: (val: boolean) => set({ isCartVisible: val }),
     toggleViewMode: () => set({ viewMode: get().viewMode === 'grid' ? 'list' : 'grid' }),
     setSelectedMember: (member: any) => set({ selectedMember: member }),

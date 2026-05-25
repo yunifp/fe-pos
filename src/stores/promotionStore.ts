@@ -4,7 +4,7 @@ import api from '../api/api';
 interface PromotionState {
   promotions: any[];
   branches: any[];
-  products: any[]; // Untuk selector produk saat buat promo
+  products: any[];
   isLoading: boolean;
   
   fetchInitialData: (branchId?: string) => Promise<void>;
@@ -15,7 +15,7 @@ interface PromotionState {
   deletePromotion: (id: string) => Promise<void>;
 }
 
-export const usePromotionStore = create<PromotionState>((set) => ({
+export const usePromotionStore = create<PromotionState>((set, get) => ({
   promotions: [],
   branches: [],
   products: [],
@@ -23,13 +23,16 @@ export const usePromotionStore = create<PromotionState>((set) => ({
 
   fetchInitialData: async (branchId) => {
       try {
-          // Ambil Cabang & Produk (Untuk pilihan target promo)
           const [branchRes, prodRes] = await Promise.all([
               api.get('/branches'),
               api.get('/products', { params: branchId ? { branchId } : {} })
           ]);
-          set({ branches: branchRes.data, products: prodRes.data });
-      } catch (e) { console.error(e); }
+          // BACKEND MENGGUNAKAN .data.data
+          set({ 
+              branches: branchRes.data.data || [], 
+              products: prodRes.data.data || [] 
+          });
+      } catch (e) { console.error("Error fetching initial data", e); }
   },
 
   fetchPromotions: async (branchId) => {
@@ -37,30 +40,32 @@ export const usePromotionStore = create<PromotionState>((set) => ({
     try {
       const params = branchId ? { branchId } : {}; 
       const res = await api.get('/promotions', { params });
-      set({ promotions: res.data, isLoading: false });
+      // BACKEND MENGGUNAKAN .data.data
+      set({ promotions: res.data.data || [], isLoading: false });
     } catch (error) {
-      set({ isLoading: false });
+      set({ isLoading: false, promotions: [] });
     }
   },
 
-  // fech by branch id & type
   fetchPromotionsByType: async (branchId?: string, type?: string) => {
     set({ isLoading: true });
     try {
       const params = branchId ? { branchId, type } : { type };
       const res = await api.get('/promotions/by-branch-and-type', { params });
-      set({ promotions: res.data, isLoading: false });
+      set({ promotions: res.data.data || [], isLoading: false });
     } catch (error) {
-      set({ isLoading: false });
+      set({ isLoading: false, promotions: [] });
     }
   },
 
   createPromotion: async (data) => {
       await api.post('/promotions', data);
+      await get().fetchPromotions(); // REFRESH LIST OTOMATIS
   },
 
   updatePromotion: async (id, data) => {
       await api.put(`/promotions/${id}`, data);
+      await get().fetchPromotions(); // REFRESH LIST OTOMATIS
   },
 
   deletePromotion: async (id) => {

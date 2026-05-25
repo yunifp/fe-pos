@@ -1,9 +1,9 @@
 import React, { useState, useEffect, createElement, useMemo, useRef } from 'react';
 import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Keyboard, TouchableWithoutFeedback, useWindowDimensions } from 'react-native';
-import { X, Check, Tag, Calendar, Box, Ticket, ShoppingBag, Search, Store, Layers, DollarSign } from 'lucide-react-native';
+import { X, Check, Tag, Calendar, Box, Ticket, ShoppingBag, Store, Layers, DollarSign } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSettingStore } from '../stores/settingStore';
-import InputField from './InputField'; // <--- IMPORT KOMPONEN INPUTFIELD REUSABLE
+import InputField from './InputField';
 
 interface Props {
     visible: boolean;
@@ -117,31 +117,37 @@ export default function PromotionFormModal({ visible, onClose, onSubmit, initial
     const handleSubmitInternal = async () => {
         const error = validateForm();
         if (error) return Alert.alert("Lengkapi Data", error);
-        
+
         setLoading(true);
         try {
             const { name, code, discountValue, minPurchase, maxDiscount } = formRef.current;
+
+            // PERBAIKAN: PAYLOAD DISESUAIKAN DENGAN BACKEND (promo.controller.ts)
             const payload: any = {
                 id: initialData?.id,
-                name, code, type,
+                name,
+                code,
+                type,
                 startDate: startDate.toISOString().split('T')[0],
                 endDate: endDate.toISOString().split('T')[0],
                 minPurchase: parseFloat(minPurchase || '0'),
                 maxDiscount: parseFloat(maxDiscount || '0'),
-                discountPct: discountMode === 'PERCENT' ? (parseInt(discountValue || '0')) : null,
-                discountAmt: discountMode === 'AMOUNT' ? (parseFloat(discountValue || '0')) : null,
-                targetBranchIds: userRole === 'OWNER' ? branches.map(b => b.id) : undefined,
-                targetProductIds: type !== 'TRANSACTION' 
-                    ? selectedVariants.map(id => ({ variantId: parseInt(id), quantity: 1 })) 
-                    : undefined
+                discountPct: discountMode === 'PERCENT' ? parseInt(discountValue || '0') : null,
+                discountAmt: discountMode === 'AMOUNT' ? parseFloat(discountValue || '0') : null,
+                isGlobal: true, // Untuk saat ini dianggap global semua cabang (karena RBAC owner)
+                branchIds: userRole === 'OWNER' ? branches.map(b => b.id) : undefined, // Diubah menjadi branchIds
+                // Diubah menjadi targetVariantIds berupa array of number (sesuai createPromotionSchema)
+                targetVariantIds: type !== 'TRANSACTION'
+                    ? selectedVariants.map(id => parseInt(id))
+                    : []
             };
 
             await onSubmit(payload);
             onClose();
-        } catch (e) { 
-            Alert.alert("Error", "Gagal menyimpan promosi. Pastikan koneksi stabil."); 
-        } finally { 
-            setLoading(false); 
+        } catch (e) {
+            Alert.alert("Error", "Gagal menyimpan promosi. Pastikan kode tidak duplikat.");
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -180,7 +186,6 @@ export default function PromotionFormModal({ visible, onClose, onSubmit, initial
                     { value: 'BUNDLE', label: 'BUNDLE', icon: (active: any) => <Layers size={14} color={active ? '#1E293B' : '#94A3B8'} /> }
                 ]} />
 
-                {/* MENGGUNAKAN INPUTFIELD GLOBAL */}
                 <InputField key={`name-${refreshTrigger}`} label="Nama Promo" isRequired defaultValue={formRef.current.name} onChangeText={(t: string) => formRef.current.name = t} placeholder="Flash Sale" icon={<Tag size={16} color="#64748B" />} />
                 <InputField key={`code-${refreshTrigger}`} label="Kode Voucher" isRequired defaultValue={formRef.current.code} onChangeText={(t: string) => formRef.current.code = t.toUpperCase()} placeholder="PROMO" icon={<Box size={16} color="#64748B" />} disabled={!!initialData} />
 
@@ -268,24 +273,29 @@ export default function PromotionFormModal({ visible, onClose, onSubmit, initial
                                                 <Text className={`text-[9px] font-black uppercase ${isAllSelected ? 'text-white' : 'text-indigo-600'}`}>{isAllSelected ? 'Batal Semua' : 'Pilih Semua'}</Text>
                                             </TouchableOpacity>
                                         </View>
-                                        {productsByBranch[branchName].map((p: any) => p.variants.map((v: any) => {
-                                            const isSelected = selectedVariants.includes(v.id.toString());
-                                            return (
-                                                <TouchableOpacity
-                                                    key={v.id} disabled={isBranchDisabled} activeOpacity={0.6}
-                                                    onPress={() => setSelectedVariants(isSelected ? selectedVariants.filter(id => id !== v.id.toString()) : [...selectedVariants, v.id.toString()])}
-                                                    className={`flex-row items-center p-3.5 mb-1.5 rounded-xl border ${isSelected ? 'bg-indigo-50 border-indigo-200 shadow-sm' : 'bg-white border-slate-100'}`}
-                                                >
-                                                    <View className={`w-5 h-5 mr-3 border-2 items-center justify-center rounded-md ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-slate-200'}`}>
-                                                        {isSelected && <Check size={12} color="white" strokeWidth={4} />}
-                                                    </View>
-                                                    <View className="flex-1">
-                                                        <Text className={`text-xs font-bold ${isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>{p.name}</Text>
-                                                        <Text className="text-[10px] text-slate-400 font-medium">Varian: {v.name}</Text>
-                                                    </View>
-                                                </TouchableOpacity>
-                                            )
-                                        }))}
+                                        {productsByBranch[branchName].map((p: any) => {
+                                            // TAMBAHKAN LINE INI (Safe access)
+                                            const variants = p.variants || [{ id: p.id, name: 'Reguler' }];
+
+                                            return variants.map((v: any) => {
+                                                const isSelected = selectedVariants.includes(v.id.toString());
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={v.id} disabled={isBranchDisabled} activeOpacity={0.6}
+                                                        onPress={() => setSelectedVariants(isSelected ? selectedVariants.filter(id => id !== v.id.toString()) : [...selectedVariants, v.id.toString()])}
+                                                        className={`flex-row items-center p-3.5 mb-1.5 rounded-xl border ${isSelected ? 'bg-indigo-50 border-indigo-200 shadow-sm' : 'bg-white border-slate-100'}`}
+                                                    >
+                                                        <View className={`w-5 h-5 mr-3 border-2 items-center justify-center rounded-md ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-slate-200'}`}>
+                                                            {isSelected && <Check size={12} color="white" strokeWidth={4} />}
+                                                        </View>
+                                                        <View className="flex-1">
+                                                            <Text className={`text-xs font-bold ${isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>{p.name}</Text>
+                                                            <Text className="text-[10px] text-slate-400 font-medium">Varian: {v.name}</Text>
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                );
+                                            });
+                                        })}
                                     </View>
                                 );
                             }) : <View className="items-center py-10"><Text className="text-xs italic font-bold text-slate-400">Produk tidak ditemukan</Text></View>;
@@ -296,7 +306,7 @@ export default function PromotionFormModal({ visible, onClose, onSubmit, initial
             </ScrollView>
 
             <View className="absolute bottom-0 w-full p-5 bg-white border-t border-slate-50">
-                <TouchableOpacity onPress={handleSubmitInternal} disabled={loading} className="flex-row items-center justify-center shadow-lg h-14 rounded-xl active:scale-95" style={{ backgroundColor: settings.themePrimaryColor }}>
+                <TouchableOpacity onPress={handleSubmitInternal} disabled={loading} className="flex-row items-center justify-center shadow-lg h-14 rounded-xl active:scale-95" style={{ backgroundColor: settings.themePrimaryColor || '#4F46E5' }}>
                     {loading ? <ActivityIndicator color="white" /> : <><Text className="mr-2 text-sm italic font-black tracking-widest text-white uppercase">Simpan Promo</Text><Check size={18} color="white" strokeWidth={3} /></>}
                 </TouchableOpacity>
             </View>

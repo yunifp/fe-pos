@@ -6,7 +6,6 @@ import { useSettingStore } from '../stores/settingStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ticket } from 'lucide-react-native';
 
-// Import Reusable Components
 import MainLayout from '../components/MainLayout';
 import PromotionFormModal from '../components/PromotionFormModal';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -20,7 +19,6 @@ export default function PromotionListScreen() {
     const { settings } = useSettingStore();
     const { width } = useWindowDimensions();
 
-    // Responsive Breakpoints
     const isDesktop = width >= 1024;
     const isTablet = width >= 768 && width < 1024;
     const numColumns = isDesktop ? 3 : isTablet ? 2 : 1;
@@ -45,7 +43,7 @@ export default function PromotionListScreen() {
                 const parsedUser = JSON.parse(u);
                 setUser(parsedUser);
                 setUserRole(parsedUser.role);
-                if (parsedUser.role === 'OWNER') {
+                if (parsedUser.role === 'Owner') {
                     fetchInitialData();
                     fetchProducts();
                 } else {
@@ -58,18 +56,18 @@ export default function PromotionListScreen() {
     }, []);
 
     useEffect(() => {
-        if (userRole === 'OWNER' && branches.length > 0 && !selectedBranchId && user) {
-            const defaultId = user.branch.id;
-            setSelectedBranchId(defaultId);
-            fetchPromotions(defaultId);
-            fetchInitialData(defaultId);
+        if (userRole === 'Owner' && branches.length > 0 && !selectedBranchId && user) {
+            // Karena ini promo, biasanya owner ingin melihat promo global, set "all" secara default
+            setSelectedBranchId('all');
+            fetchPromotions();
+            fetchInitialData();
         }
     }, [userRole, branches, user]);
 
     const handleBranchChange = (id: string) => {
         setSelectedBranchId(id);
-        fetchPromotions(id);
-        fetchInitialData(id);
+        fetchPromotions(id === 'all' ? undefined : id);
+        fetchInitialData(id === 'all' ? undefined : id);
     };
 
     const handleOpenAdd = () => { setEditingPromo(null); setModalVisible(true); };
@@ -84,19 +82,23 @@ export default function PromotionListScreen() {
                 await createPromotion(data);
                 setToast({ visible: true, message: 'Promo diterbitkan', type: 'success' });
             }
-            fetchPromotions(userRole === 'OWNER' ? (selectedBranchId as string) : undefined);
-        } catch (error) {
-            setToast({ visible: true, message: 'Gagal memproses data', type: 'error' });
+            fetchPromotions(userRole === 'Owner' && selectedBranchId !== 'all' ? (selectedBranchId as string) : undefined);
+        } catch (error: any) {
+            setToast({ visible: true, message: error.response?.data?.message || 'Gagal memproses data', type: 'error' });
         }
     };
 
     const executeDelete = async () => {
-        await deletePromotion(deleteModal.id);
-        setDeleteModal({ visible: false, id: '' });
-        setToast({ visible: true, message: 'Promo dihapus', type: 'success' });
+        try {
+            await deletePromotion(deleteModal.id);
+            setToast({ visible: true, message: 'Promo dihapus', type: 'success' });
+        } catch (error: any) {
+            setToast({ visible: true, message: error.response?.data?.message || 'Gagal menghapus', type: 'error' });
+        } finally {
+            setDeleteModal({ visible: false, id: '' });
+        }
     };
 
-    // Filter Promosi Berdasarkan Pencarian (Nama / Kode Promo)
     const filteredPromotions = promotions.filter((p: any) => 
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
         p.code.toLowerCase().includes(searchQuery.toLowerCase())
@@ -107,7 +109,6 @@ export default function PromotionListScreen() {
             <View className="relative flex-1 bg-slate-50">
                 <CustomToast visible={toast.visible} message={toast.message} type={toast.type} onHide={() => setToast({ ...toast, visible: false })} />
 
-                {/* --- PENGGUNAAN SCREEN HEADER --- */}
                 <ScreenHeader 
                     title="Promo & Loyalty"
                     subtitle="Manajemen Diskon Toko"
@@ -120,9 +121,9 @@ export default function PromotionListScreen() {
                     selectedBranchId={selectedBranchId}
                     onBranchChange={handleBranchChange}
                     userBranchName={user?.branch?.name}
+                    // showAllBranchOption={true}
                 />
 
-                {/* --- LIST AREA --- */}
                 {isLoading ? (
                     <View className="flex-1 justify-center items-center">
                         <ActivityIndicator size="large" color={settings.themePrimaryColor || "#6366F1"} />
@@ -152,13 +153,12 @@ export default function PromotionListScreen() {
                     />
                 )}
 
-                <FloatingActionButton 
-                    onPress={handleOpenAdd} 
-                    color={settings.themePrimaryColor || '#4F46E5'} 
-                />
+                {(userRole === 'Owner' || userRole === 'Manager') && (
+                    <FloatingActionButton onPress={handleOpenAdd} color={settings.themePrimaryColor || '#4F46E5'} />
+                )}
 
                 <PromotionFormModal visible={isModalVisible} onClose={() => setModalVisible(false)} onSubmit={handleFormSubmit} initialData={editingPromo} branches={branches} products={allProducts} userRole={userRole} />
-                <ConfirmationModal visible={deleteModal.visible} title="Hapus Promo?" message="Data ini tidak dapat dikembalikan." confirmText="Hapus" isDanger onConfirm={executeDelete} onCancel={() => setDeleteModal({ visible: false, id: '' })} />
+                <ConfirmationModal visible={deleteModal.visible} title="Hapus Promo?" message="Data ini tidak dapat dikembalikan. Promo yang terhapus tidak bisa digunakan lagi di Kasir." confirmText="Hapus" isDanger onConfirm={executeDelete} onCancel={() => setDeleteModal({ visible: false, id: '' })} />
             </View>
         </MainLayout>
     );
